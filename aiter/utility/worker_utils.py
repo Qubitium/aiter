@@ -32,4 +32,6 @@ def get_worker_count(default: int | None = None) -> int:
             requested = int(raw)
         except ValueError as exc:
             raise ValueError(f"MAX_JOBS must be an integer, got {raw!r}") from exc
+    if raw is not None:
+        return max(1, requested)
     return min(budget, max(1, requested))
