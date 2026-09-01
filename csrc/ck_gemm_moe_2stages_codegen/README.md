@@ -151,9 +151,10 @@ including warm-up; the value must be at least 2). The five lowest-latency
 global fastest candidate, plus the most accurate candidate not already in that
 performance set are revalidated and retimed for `--fast-scan-final-iters`
 profiled launches (default 100; the value must be at least 2) without another
-warm-up. If a finalist fails final accuracy validation, the next unselected
-coarse-accurate candidate is retimed as a backfill until the target number of
-successful final retimes is reached or the candidate pool is exhausted. If the globally most accurate candidate
+warm-up. If a finalist fails final accuracy validation, the next-lowest-latency
+unselected coarse survivor is retimed as a backfill until the target number of
+successful final retimes is reached or the candidate pool is exhausted. The
+accuracy-bucket ordering is diagnostic only. If the globally most accurate candidate
 is already a performance finalist, the next-most-accurate unselected candidate
 is promoted instead, so one independent accuracy candidate always reaches the
 final stage when one is available. Every requested profiler sample is included

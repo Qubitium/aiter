@@ -1,6 +1,5 @@
 """Worker limits shared by setup and AITER runtime code."""
 
-import math
 import os
 import posixpath
 
@@ -8,8 +7,6 @@ CPU_CORE_COUNT_UTILIZATION = 0.80
 # Approximate peak RSS observed per AOT worker, rounded up to 1.5 GB.
 EST_WORKER_RSS_BYTES = 1_500_000_000
 _WORKER_ENV = "AITER_MAX_JOBS"
-_LEGACY_WORKER_ENV = "AITER_FLYDSL_AOT_WORKERS"
-_LEGACY_MEMORY_ENV = "AITER_FLYDSL_AOT_MEM_PER_WORKER_GB"
 _PROC_SELF_CGROUP_PATH = "/proc/self/cgroup"
 _PROC_SELF_MOUNTINFO_PATH = "/proc/self/mountinfo"
 
@@ -181,35 +178,12 @@ def _available_memory_bytes() -> int:
     )
 
 
-def _memory_per_worker_bytes() -> int | None:
-    """Return the configured RSS estimate, or None when the cap is disabled."""
-    raw = os.environ.get(_LEGACY_MEMORY_ENV)
-    if raw is None:
-        return EST_WORKER_RSS_BYTES
-    try:
-        per_gib = float(raw)
-    except ValueError as exc:
-        raise ValueError(
-            f"{_LEGACY_MEMORY_ENV} must be a number, got {raw!r}"
-        ) from exc
-    if not math.isfinite(per_gib):
-        raise ValueError(
-            f"{_LEGACY_MEMORY_ENV} must be a finite number, got {raw!r}"
-        )
-    if per_gib <= 0:
-        return None
-    return max(1, int(per_gib * 1024**3))
-
-
 def get_automatic_worker_budgets() -> tuple[int, int]:
     """Return the CPU and memory worker budgets."""
     cpu_budget = get_cpu_worker_budget()
-    memory_per_worker = _memory_per_worker_bytes()
-    if memory_per_worker is None:
-        return cpu_budget, cpu_budget
     return (
         cpu_budget,
-        max(1, _available_memory_bytes() // memory_per_worker),
+        max(1, _available_memory_bytes() // EST_WORKER_RSS_BYTES),
     )
 
 
@@ -218,19 +192,16 @@ def get_worker_count() -> int:
 
     An explicit ``AITER_MAX_JOBS`` is an unsafe expert override: it is honored
     after normalization to the one-worker floor and bypasses automatic CPU and
-    memory caps. ``AITER_FLYDSL_AOT_WORKERS`` remains a compatibility alias.
-    Automatic sizing takes the minimum of the CPU and effective available-
-    memory budgets.
+    memory caps. Automatic sizing takes the minimum of the CPU and effective
+    available-memory budgets.
     """
-    for env_name in (_WORKER_ENV, _LEGACY_WORKER_ENV):
-        raw = os.environ.get(env_name)
-        if raw is None:
-            continue
+    raw = os.environ.get(_WORKER_ENV)
+    if raw is not None:
         try:
             workers = max(1, int(raw))
         except ValueError as exc:
             raise ValueError(
-                f"{env_name} must be an integer, got {raw!r}"
+                f"{_WORKER_ENV} must be an integer, got {raw!r}"
             ) from exc
         os.environ[_WORKER_ENV] = str(workers)
         return workers
@@ -254,7 +225,6 @@ def get_worker_count_for(work_count: int) -> int:
 def configure_worker_subprocesses() -> None:
     """Force compiler descendants of a process-pool worker to one job."""
     os.environ[_WORKER_ENV] = "1"
-    os.environ[_LEGACY_WORKER_ENV] = "1"
     # A process-pool child is already one of the top-level workers. Do not
     # divide its explicit nested budget by the parent process count again.
     os.environ.pop("PREBUILD_THREAD_NUM", None)

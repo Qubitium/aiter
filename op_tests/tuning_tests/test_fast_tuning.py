@@ -345,6 +345,75 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
             ],
         )
 
+    def test_backfill_is_latency_ordered_after_accuracy_promotion(self):
+        from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
+
+        tuner = gemm_moe_tune.Mxfp4FlydslTuner.__new__(
+            gemm_moe_tune.Mxfp4FlydslTuner
+        )
+        candidates = [self._candidate(f"candidate_{i}") for i in range(10)]
+        args = SimpleNamespace(
+            fast_scan=True,
+            fast_scan_warmup_accuracy_checks=1,
+            fast_scan_iters=10,
+            fast_scan_final_iters=100,
+            fast_scan_finalists=5,
+            timeout=0,
+            errRatio=0.1,
+            warmup=2,
+            iters=101,
+        )
+        row = {
+            "token": 1,
+            "model_dim": 256,
+            "inter_dim": 256,
+            "expert": 8,
+            "topk": 2,
+            "act_type": "ActivationType.Silu",
+        }
+        final_calls = []
+
+        def run_candidate(_row, candidate, _args, **kwargs):
+            name = candidate["kernelName1"]
+            index = int(name.rsplit("_", 1)[1])
+            if kwargs["num_iters"] == 10:
+                candidate["us"] = 100.0 + index * 0.1
+                candidate["err1"] = 0.001 if index == 9 else 0.01 + index * 1e-4
+                return candidate["us"]
+
+            final_calls.append(name)
+            if index in {*range(5), 9}:
+                raise gemm_moe_tune.Mxfp4AccuracyError(
+                    "final validation failed"
+                )
+            return candidate["us"]
+
+        with (
+            mock.patch.object(tuner, "_candidate_rows", return_value=candidates),
+            mock.patch.object(tuner, "_precompile_candidates", return_value=(10, 0)),
+            mock.patch.object(tuner, "_prepare_case", return_value="fixture"),
+            mock.patch.object(tuner, "_torch_ref", return_value="reference"),
+            mock.patch.object(tuner, "_run_candidate", side_effect=run_candidate),
+            mock.patch("builtins.print"),
+        ):
+            tuner._tune_one_shape(row, args)
+
+        self.assertEqual(
+            final_calls,
+            [
+                "g1_candidate_0",
+                "g1_candidate_1",
+                "g1_candidate_2",
+                "g1_candidate_3",
+                "g1_candidate_4",
+                "g1_candidate_9",
+                "g1_candidate_5",
+                "g1_candidate_6",
+                "g1_candidate_7",
+                "g1_candidate_8",
+            ],
+        )
+
     def test_warmup_outputs_are_accuracy_checks_outside_timing(self):
         from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
 

@@ -5174,7 +5174,9 @@ class FmoeTuner(TunerCommon):
             for i, ret in enumerate(rets):
                 info, us, err = ret
                 if us == float("inf") or us == -1:
-                    tag = dispatched.get(i, info)
+                    # mp_tuner may regroup shape-grouped tasks before dispatch,
+                    # so the returned info is the only reliable failure label.
+                    tag = info
                     failed_cases.append((i, tag, us, err))
             if failed_cases:
                 print(f"\n[tune] {len(failed_cases)} of {len(rets)} tasks failed:")
@@ -6759,16 +6761,19 @@ class Mxfp4FlydslTuner(FmoeTuner):
             finalist_iters = _parse_fast_scan_iters(
                 getattr(args, "fast_scan_final_iters", 100)
             )
-            ranked_candidates = _rank_mxfp4_candidates(
+            # Keep the accuracy-aware bucket rank available for diagnostics, but
+            # use one stable latency ordering for both the initial performance
+            # finalists and all later backfill. This preserves the fastest
+            # remaining coarse survivor when a finalist fails final validation.
+            performance_order = sorted(
                 successful,
-                timing_tie_ratio=MXFP4_COARSE_TIMING_TIE_RATIO,
+                key=lambda candidate: (
+                    float(candidate["us"]),
+                    candidate["kernelName1"],
+                    candidate["kernelName2"],
+                ),
             )
-            # Final timing must include the actual coarse global fastest. The
-            # coarse rank intentionally prefers accuracy inside timing buckets,
-            # so taking its first N entries could otherwise drop that anchor.
-            performance_finalists = _select_mxfp4_performance_finalists(
-                successful, finalist_count
-            )
+            performance_finalists = performance_order[:finalist_count]
             accuracy_promotion = _select_mxfp4_accuracy_promotion(
                 successful, performance_finalists
             )
@@ -6780,7 +6785,10 @@ class Mxfp4FlydslTuner(FmoeTuner):
             )
             finalist_queue = []
             finalist_keys = set()
-            for candidate in finalists + ranked_candidates:
+            # Accuracy promotion is tried once after the speed finalists. Any
+            # further replacement is strictly next-lowest-latency order; the
+            # accuracy-bucket rank is diagnostic only and must not reorder it.
+            for candidate in finalists + performance_order:
                 candidate_key = (
                     candidate["kernelName1"],
                     candidate["kernelName2"],
