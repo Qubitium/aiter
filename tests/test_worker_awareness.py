@@ -88,6 +88,19 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(get_worker_count(), 7)
             self.assertEqual(os.environ["MAX_JOBS"], "7")
 
+    def test_missing_cgroup_pid_files_disable_the_task_budget(self):
+        with patch.object(
+            worker_limits.os.path, "exists", side_effect=(True, False)
+        ), patch("builtins.open") as open_file:
+            self.assertIsNone(worker_limits._cgroup_worker_budget())
+            open_file.assert_not_called()
+
+    def test_unreadable_cgroup_pid_files_disable_the_task_budget(self):
+        with patch.object(
+            worker_limits.os.path, "exists", return_value=True
+        ), patch("builtins.open", side_effect=PermissionError):
+            self.assertIsNone(worker_limits._cgroup_worker_budget())
+
     def test_worker_descendants_default_to_one_job(self):
         with patch.dict(os.environ, {"MAX_JOBS": "23"}, clear=True):
             configure_worker_subprocesses()

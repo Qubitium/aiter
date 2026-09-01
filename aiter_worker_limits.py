@@ -7,6 +7,8 @@ CPU_CORE_COUNT_UTILIZATION = 0.80
 EST_WORKER_RSS_BYTES = 1_500_000_000
 CGROUP_TASKS_PER_WORKER = 12
 CGROUP_TASK_RESERVE = 16
+_CGROUP_PIDS_MAX_PATH = "/sys/fs/cgroup/pids.max"
+_CGROUP_PIDS_CURRENT_PATH = "/sys/fs/cgroup/pids.current"
 _SUBPROCESS_JOB_ENV = {
     "CMAKE_BUILD_PARALLEL_LEVEL": "1",
     "MAKEFLAGS": "-j1",
@@ -38,12 +40,16 @@ def _available_memory_bytes() -> int:
 
 def _cgroup_worker_budget() -> int | None:
     """Return worker capacity from the cgroup task limit and measured fanout."""
+    paths = (_CGROUP_PIDS_MAX_PATH, _CGROUP_PIDS_CURRENT_PATH)
+    if not all(os.path.exists(path) for path in paths):
+        return None
+
     try:
-        with open("/sys/fs/cgroup/pids.max") as max_file:
+        with open(_CGROUP_PIDS_MAX_PATH) as max_file:
             raw_max = max_file.read().strip()
         if raw_max == "max":
             return None
-        with open("/sys/fs/cgroup/pids.current") as current_file:
+        with open(_CGROUP_PIDS_CURRENT_PATH) as current_file:
             current = int(current_file.read().strip())
         available = max(0, int(raw_max) - current - CGROUP_TASK_RESERVE)
         return max(1, available // CGROUP_TASKS_PER_WORKER)
