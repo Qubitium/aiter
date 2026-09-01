@@ -41,6 +41,13 @@ def safe_ppid(proc: psutil.Process) -> int:
         return -1
 
 
+def safe_status(proc: psutil.Process) -> str:
+    try:
+        return proc.status()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return psutil.STATUS_ZOMBIE
+
+
 def safe_rss(proc: psutil.Process) -> int:
     try:
         return proc.memory_info().rss
@@ -164,7 +171,8 @@ def main() -> None:
                 workers = [
                     p
                     for p in {p.pid: p for p in workers}.values()
-                    if "/aiter/aot/pa.py" in " ".join(safe_cmdline(p))
+                    if safe_status(p) != psutil.STATUS_ZOMBIE
+                    and safe_name(p).startswith("python")
                 ]
                 metrics["peak_workers"] = max(metrics["peak_workers"], len(workers))
 
