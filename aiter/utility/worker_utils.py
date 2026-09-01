@@ -64,9 +64,11 @@ def get_worker_count(default: int | None = None) -> int:
     raw = os.environ.get("MAX_JOBS")
     if raw is not None:
         try:
-            return max(1, int(raw))
+            workers = max(1, int(raw))
         except ValueError as exc:
             raise ValueError(f"MAX_JOBS must be an integer, got {raw!r}") from exc
+        os.environ["MAX_JOBS"] = str(workers)
+        return workers
 
     cpu_budget = max(1, (os.cpu_count() or 1) - 1)
     memory_budget = max(1, _available_memory_bytes() // _MEMORY_PER_WORKER_BYTES)
@@ -74,6 +76,6 @@ def get_worker_count(default: int | None = None) -> int:
     task_budget = _cgroup_worker_budget()
     if task_budget is not None:
         budgets.append(task_budget)
-    workers = min(budgets)
+    workers = max(1, min(budgets))
     os.environ["MAX_JOBS"] = str(workers)
     return workers

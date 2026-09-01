@@ -39,6 +39,23 @@ class WorkerAwarenessTest(unittest.TestCase):
         ):
             self.assertEqual(get_worker_count(), 1)
 
+    def test_nonpositive_max_jobs_is_clamped_and_exported(self):
+        for raw_value in ("0", "-7"):
+            with self.subTest(raw_value=raw_value), patch.dict(
+                os.environ, {"MAX_JOBS": raw_value}, clear=True
+            ):
+                self.assertEqual(get_worker_count(), 1)
+                self.assertEqual(os.environ["MAX_JOBS"], "1")
+
+    def test_zero_capacity_probes_still_return_one_worker(self):
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            _MODULE, "_available_memory_bytes", return_value=0
+        ), patch.object(_MODULE, "_cgroup_worker_budget", return_value=0), patch.object(
+            os, "cpu_count", return_value=None
+        ):
+            self.assertEqual(get_worker_count(), 1)
+            self.assertEqual(os.environ["MAX_JOBS"], "1")
+
     def test_available_memory_caps_default_workers(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
             _MODULE,
@@ -66,6 +83,13 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(os.environ["CMAKE_BUILD_PARALLEL_LEVEL"], "1")
             self.assertEqual(os.environ["MAKEFLAGS"], "-j1")
             self.assertEqual(os.environ["NINJAFLAGS"], "-j1")
+
+    def test_zero_subprocess_jobs_is_clamped_to_one(self):
+        with patch.dict(
+            os.environ, {"AITER_SUBPROCESS_MAX_JOBS": "0"}, clear=True
+        ):
+            configure_worker_subprocesses()
+            self.assertEqual(os.environ["MAX_JOBS"], "1")
 
 
 if __name__ == "__main__":
