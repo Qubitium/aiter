@@ -10,6 +10,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -87,6 +88,23 @@ this_dir = os.path.dirname(os.path.abspath(__file__))
 AITER_ROOT_DIR = os.path.abspath(f"{this_dir}/../../")
 AITER_LOG_MORE = int(os.getenv("AITER_LOG_MORE", "0"))
 AITER_LOG_TUNED_CONFIG = int(os.getenv("AITER_LOG_TUNED_CONFIG", "0"))
+
+
+def _run_blob_generator(blob_gen_cmd, blob_dir):
+    """Run a source-tree blob generator with the AITER checkout importable."""
+    if AITER_LOG_MORE:
+        logger.info(f"exec_blob ---> {PY} {blob_gen_cmd.format(blob_dir)}")
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (AITER_ROOT_DIR, env.get("PYTHONPATH")))
+    )
+    subprocess.run(
+        f"{shlex.quote(PY)} {blob_gen_cmd.format(blob_dir)}",
+        shell=True,
+        check=True,
+        env=env,
+    )
 
 
 # config_env start here
@@ -1007,9 +1025,7 @@ def build_module(
             if blob_gen_cmd:
                 blob_dir = f"{op_dir}/blob/"
                 os.makedirs(blob_dir, exist_ok=True)
-                if AITER_LOG_MORE:
-                    logger.info(f"exec_blob ---> {PY} {blob_gen_cmd.format(blob_dir)}")
-                os.system(f"{PY} {blob_gen_cmd.format(blob_dir)}")
+                _run_blob_generator(blob_gen_cmd, blob_dir)
                 sources += rename_cpp_to_cu([blob_dir], src_dir, hipify, recursive=True)
             return sources
 
