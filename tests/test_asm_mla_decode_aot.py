@@ -33,7 +33,7 @@ class AsmMlaDecodeAotTest(unittest.TestCase):
         )
 
         with patch.object(driver, "compile", compile_mock):
-            driver.process_config(config)
+            self.assertIsNone(driver.process_config(config))
 
         compile_mock.assert_called_once_with(
             16,

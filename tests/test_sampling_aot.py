@@ -7,6 +7,42 @@ from aiter.aot import sampling as driver
 
 
 class SamplingAotTest(unittest.TestCase):
+    def test_workers_return_none_after_compilation(self):
+        with (
+            patch.object(driver, "top_k_renorm_probs_compile") as top_k_renorm,
+            patch.object(driver, "top_p_sampling_from_probs_compile") as top_p,
+            patch.object(
+                driver, "top_k_top_p_sampling_from_probs_compile"
+            ) as top_k_top_p,
+        ):
+            self.assertIsNone(
+                driver.process_top_k_renorm_config(
+                    driver.TopKRenormConfig(vec_size=4, func_name="top_k_renorm_probs")
+                )
+            )
+            self.assertIsNone(
+                driver.process_top_p_sampling_config(
+                    driver.TopPSamplingConfig(
+                        vec_size=4,
+                        deterministic=True,
+                        func_name="top_p_sampling_from_probs",
+                    )
+                )
+            )
+            self.assertIsNone(
+                driver.process_top_k_top_p_sampling_config(
+                    driver.TopKTopPSamplingConfig(
+                        vec_size=4,
+                        deterministic=False,
+                        func_name="top_k_top_p_sampling_from_probs",
+                    )
+                )
+            )
+
+        top_k_renorm.assert_called_once_with(4)
+        top_p.assert_called_once_with(4, True)
+        top_k_top_p.assert_called_once_with(4, False)
+
     def test_all_kernel_families_are_submitted_before_results_are_consumed(self):
         executor = Mock()
         executor.__enter__ = Mock(return_value=executor)
