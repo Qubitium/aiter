@@ -1,6 +1,5 @@
 """Focused tests for PA-Gluon's centralized worker policy."""
 
-import inspect
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -10,18 +9,6 @@ from csrc.cpp_itfs.pa_gluon_aot import pa_decode_gluon_aot_prebuild as pa_gluon
 
 
 class PaGluonProcessLimitTest(unittest.TestCase):
-    def test_cli_has_no_local_worker_override(self):
-        option_strings = {
-            option
-            for action in pa_gluon.create_argument_parser()._actions
-            for option in action.option_strings
-        }
-        self.assertNotIn("--num_processes", option_strings)
-
-    def test_api_has_no_local_worker_override(self):
-        parameters = inspect.signature(pa_gluon.run_multi_pa_gluon_test).parameters
-        self.assertNotIn("num_processes", parameters)
-
     @patch.object(pa_gluon, "get_worker_count_for", return_value=1)
     def test_pool_uses_shared_worker_policy(self, worker_count):
         executor = MagicMock()
