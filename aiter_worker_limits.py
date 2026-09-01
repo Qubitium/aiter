@@ -91,6 +91,8 @@ def _cgroup_memory_directories() -> list[tuple[str, str]]:
         if "memory" in controllers.split(","):
             memory_path = path
 
+    directories = []
+    seen_directories = set()
     for line in mountinfo_lines:
         try:
             mount_fields, filesystem_fields = line.rstrip("\n").split(" - ", 1)
@@ -124,16 +126,18 @@ def _cgroup_memory_directories() -> list[tuple[str, str]]:
         if current is None:
             continue
 
-        directories = []
         while True:
-            directories.append((version, current))
+            directory = (version, current)
+            if directory not in seen_directories:
+                directories.append(directory)
+                seen_directories.add(directory)
             if current == mount_point:
-                return directories
+                break
             parent = os.path.dirname(current)
             if parent == current or os.path.commonpath((mount_point, parent)) != mount_point:
                 break
             current = parent
-    return []
+    return directories
 
 
 def _cgroup_memory_remaining_bytes() -> int | None:

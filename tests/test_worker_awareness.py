@@ -103,6 +103,51 @@ class WorkerAwarenessTest(unittest.TestCase):
             ],
         )
 
+    def test_hybrid_cgroup_mounts_all_contribute_memory_directories(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = pathlib.Path(tempdir)
+            v2_mount = root / "unified"
+            v1_mount = root / "memory"
+            v2_mount.mkdir()
+            v1_mount.mkdir()
+            v2_current = v2_mount / "container"
+            v1_current = v1_mount / "container"
+            v2_current.mkdir()
+            v1_current.mkdir()
+            (v2_current / "memory.max").write_text(str(16 * 1024**3))
+            (v2_current / "memory.current").write_text(str(1 * 1024**3))
+            (v1_current / "memory.limit_in_bytes").write_text(
+                str(8 * 1024**3)
+            )
+            (v1_current / "memory.usage_in_bytes").write_text(
+                str(7 * 1024**3)
+            )
+            cgroup_file = root / "cgroup.txt"
+            mountinfo_file = root / "mountinfo.txt"
+            cgroup_file.write_text("0::/container\n5:memory:/container\n")
+            mountinfo_file.write_text(
+                f"36 25 0:32 / {v2_mount} rw - cgroup2 none rw\n"
+                f"29 23 0:26 / {v1_mount} rw - cgroup cgroup rw,memory\n"
+            )
+            with patch.object(
+                worker_limits, "_PROC_SELF_CGROUP_PATH", str(cgroup_file)
+            ), patch.object(
+                worker_limits, "_PROC_SELF_MOUNTINFO_PATH", str(mountinfo_file)
+            ):
+                directories = worker_limits._cgroup_memory_directories()
+                remaining = worker_limits._cgroup_memory_remaining_bytes()
+
+        self.assertEqual(
+            directories,
+            [
+                ("v2", str(v2_mount / "container")),
+                ("v2", str(v2_mount)),
+                ("v1", str(v1_mount / "container")),
+                ("v1", str(v1_mount)),
+            ],
+        )
+        self.assertEqual(remaining, 1 * 1024**3)
+
     def test_cgroup_remaining_memory_uses_tightest_finite_ancestor(self):
         with tempfile.TemporaryDirectory() as tempdir:
             root = pathlib.Path(tempdir)
