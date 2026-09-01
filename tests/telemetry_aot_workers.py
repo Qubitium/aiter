@@ -10,10 +10,10 @@ import time
 
 import psutil
 
-
 DURATION_SECONDS = int(os.environ.get("AITER_TELEMETRY_SECONDS", "60"))
 SAMPLE_SECONDS = 0.02
-MEMORY_PER_WORKER_BYTES = 2 * 1024**3
+# Round the observed per-worker cold-build peak up to 1.5 GiB.
+MEMORY_PER_WORKER_BYTES = 3 * 1024**3 // 2
 CGROUP_TASKS_PER_WORKER = 12
 CGROUP_TASK_RESERVE = 16
 LOG_PATH = pathlib.Path("/tmp/aiter-aot-telemetry.log")
@@ -108,7 +108,7 @@ def main() -> None:
     metrics = {
         "duration_seconds": DURATION_SECONDS,
         "available_memory_bytes": available,
-        "memory_per_worker_assumption_bytes": MEMORY_PER_WORKER_BYTES,
+        "memory_per_worker_observed_bytes": MEMORY_PER_WORKER_BYTES,
         "memory_derived_workers": memory_budget,
         "cpu_derived_workers": cpu_budget,
         "cgroup_tasks_per_worker_assumption": CGROUP_TASKS_PER_WORKER,

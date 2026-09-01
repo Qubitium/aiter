@@ -4,7 +4,6 @@ import pathlib
 import unittest
 from unittest.mock import patch
 
-
 _HELPER = pathlib.Path(__file__).parents[1] / "aiter/utility/worker_utils.py"
 _SPEC = importlib.util.spec_from_file_location("aiter_worker_utils", _HELPER)
 _MODULE = importlib.util.module_from_spec(_SPEC)
@@ -42,7 +41,9 @@ class WorkerAwarenessTest(unittest.TestCase):
 
     def test_available_memory_caps_default_workers(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
-            _MODULE, "_available_memory_bytes", return_value=8 * 1024**3
+            _MODULE,
+            "_available_memory_bytes",
+            return_value=4 * _MODULE._MEMORY_PER_WORKER_BYTES,
         ), patch.object(_MODULE, "_cgroup_worker_budget", return_value=None), patch.object(
             os, "cpu_count", return_value=64
         ):

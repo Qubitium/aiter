@@ -2,7 +2,8 @@
 
 import os
 
-_MEMORY_PER_WORKER_BYTES = 2 * 1024**3
+# Round the observed per-worker cold-build peak up to 1.5 GiB.
+_MEMORY_PER_WORKER_BYTES = 3 * 1024**3 // 2
 _CGROUP_TASKS_PER_WORKER = 12
 _CGROUP_TASK_RESERVE = 16
 _SUBPROCESS_JOB_ENV = {
