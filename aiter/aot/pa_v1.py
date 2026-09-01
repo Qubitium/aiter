@@ -3,6 +3,7 @@ import os
 from collections import namedtuple
 
 from csrc.cpp_itfs.pa.pa_v1 import compile
+from aiter.utility.worker_utils import get_worker_count
 
 PAConfig = namedtuple(
     "PAConfig",
@@ -102,7 +103,7 @@ def main():
                             )
 
     with concurrent.futures.ProcessPoolExecutor(
-        os.environ.get("MAX_JOBS", os.cpu_count())
+        get_worker_count()
     ) as executor:
         executor.map(process_config, configs)
 

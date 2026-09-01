@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from multiprocessing.connection import wait as wait_for_sentinels
 from typing import Any
+from aiter.utility.worker_utils import get_worker_count
 
 _DEFAULT_KERNEL_TIMEOUT = 1200.0
 _DEFAULT_MAX_WORKERS = 64
@@ -189,7 +190,7 @@ def _affinity_aware_cpu_count() -> int:
         n = len(os.sched_getaffinity(0))
     except (AttributeError, OSError):
         n = os.cpu_count() or 0
-    return max(n, 1)
+    return get_worker_count(default=n)
 
 
 def get_kernel_timeout() -> float:

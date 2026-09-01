@@ -3,6 +3,7 @@ import os
 from collections import namedtuple
 
 from csrc.cpp_itfs.mla.asm_mla_decode_fwd import compile
+from aiter.utility.worker_utils import get_worker_count
 from csrc.cpp_itfs.utils import AITER_CORE_DIR
 
 MLAConfig = namedtuple(
@@ -44,7 +45,7 @@ def main():
         )
 
     with concurrent.futures.ProcessPoolExecutor(
-        os.environ.get("MAX_JOBS", "16")
+        get_worker_count(default=16)
     ) as executor:
         executor.map(process_config, configs)
 

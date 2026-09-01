@@ -1,5 +1,6 @@
 import concurrent.futures
 import os
+from aiter.utility.worker_utils import get_worker_count
 from collections import namedtuple
 
 from csrc.cpp_itfs.sampling.top_k_renorm_probs import (
@@ -77,7 +78,7 @@ def main():
                 )
             )
 
-    max_jobs = int(os.environ.get("MAX_JOBS", os.cpu_count() or 16))
+    max_jobs = get_worker_count()
 
     # Process all configs in parallel
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_jobs) as executor:

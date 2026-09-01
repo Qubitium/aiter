@@ -9,6 +9,7 @@ import torch
 
 from aiter import dtypes, logger
 from aiter.test_common import checkAllclose
+from aiter.utility.worker_utils import get_worker_count
 
 _TASK_START_TIMES = None
 
@@ -395,7 +396,7 @@ def mp_tuner(
     gpu_num = torch.cuda.device_count()
     mp.set_start_method("spawn", force=True)
     mp_num = gpu_num if mp_num < 1 or mp_num > gpu_num else mp_num
-    parallel_num = mp_num
+    parallel_num = min(mp_num, get_worker_count(default=mp_num))
     start_idx = 0
     if not tasks:
         return []
