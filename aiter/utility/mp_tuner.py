@@ -188,7 +188,14 @@ def worker(
     return info, us, round(max_err_ratio, 4)
 
 
-def work_group(GPUIDMap, fast_mode, err_ratio, in_data, tasks, verbose=False):
+def work_group(
+    GPUIDMap,
+    fast_mode,
+    err_ratio,
+    in_data,
+    tasks,
+    verbose=False,
+):
     """Work group that processes a batch of related tasks."""
     group_task = [tasks] if not isinstance(tasks, list) else tasks
     kernels_num, (input_data) = in_data
@@ -359,8 +366,9 @@ def work_group(GPUIDMap, fast_mode, err_ratio, in_data, tasks, verbose=False):
             return [(tasks[0] if tasks else "unknown", float("inf"), 1.0)]
 
 
-def get_pid():
-    time.sleep(3)
+def get_pid(delay=3):
+    if delay:
+        time.sleep(delay)
     return mp.current_process().pid
 
 
@@ -388,7 +396,6 @@ def mp_tuner(
         shape_grouped: Group tasks by shape
         err_ratio: Error tolerance ratio
         timeout: Timeout in seconds for each task group (None = no timeout)
-
     Returns:
         List of (info, latency, error_ratio) tuples
     """
@@ -467,7 +474,11 @@ def mp_tuner(
         initializer=_init_task_start_times,
         initargs=(task_start_times,),
     )
-    pids = [pool.apply_async(get_pid) for i in range(start_idx, mp_num)]
+    pid_delay = 0 if mp_num == 1 else 3
+    pids = [
+        pool.apply_async(get_pid, args=(pid_delay,))
+        for i in range(start_idx, mp_num)
+    ]
     gpu_map = {el.get(): i + start_idx for i, el in enumerate(pids)}
     rets_dict = submit_tasks(pool, gpu_map, range(len(task_group)))
     # Convert to list for compatibility with existing code

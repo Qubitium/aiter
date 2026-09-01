@@ -21,21 +21,26 @@ SHAPES = [
     (385, 7168, 1024, 9),  # Kimi-K2.5 TP=2 (kimik2_c)
     (257, 7168, 512, 9),  # DSR (dsv3_b)
     (257, 7168, 256, 9),  # DSR D_INTER=256 (dsv3_c)
-    (384, 7168, 512, 8),  # Kimi-K2 TP=4, TOPK=8 (kimik2_a)
+    (384, 7168, 512, 8),  # Kimi-K2 TP=4 / Kimi-K2.5 TP=1 aux key
     (385, 7168, 256, 9),  # Kimi-K2.5 D_INTER=256 (kimik2_b)
     (32, 7168, 2048, 8),  # dsv3_a
-    (256, 3072, 1536, 8),  # minimax_a (H=3072)
+    (256, 3072, 1536, 8),  # MiniMax-M2.5 TP=1
     (256, 3072, 768, 8),  # minimax_b (H=3072)
-    (512, 4096, 256, 10),  # qwen35_397b (H=4096, TOPK=10)
+    (512, 4096, 256, 10),  # Qwen3.5-397B / Ornith-1.5-397B TP=1
+    (512, 2048, 512, 10),  # Qwen3-Coder-Next TP=1
     (48, 7168, 3072, 6),  # dsv4_ep8
     (384, 7168, 1536, 6),  # dsv4_tp2
     (384, 7168, 768, 6),  # dsv4_tp4
     (384, 7168, 512, 6),  # dsv4_tp6 (and dsv4_tp8: INTER 384→512 padded)
-    (256, 4096, 256, 6),  # dsv4_lite (H=4096)
+    (256, 4096, 256, 6),  # dsv4_lite / Inkling-Small TP=1
     (385, 7168, 1536, 7),  # dsv4 NE=385 TOPK=7 (tp2)
     (385, 7168, 768, 7),  # dsv4 NE=385 TOPK=7 (tp4)
     (385, 7168, 512, 7),  # dsv4 NE=385 TOPK=7 (tp6/tp8)
     (257, 6144, 512, 9),  # GLM-5.2 TP=4 (256 routed + 1 shared -> topk 8+1, H=6144)
+    (256, 6144, 2048, 8),  # GLM-5.3 TP=1
+    (256, 6144, 3072, 6),  # Inkling TP=1
+    (384, 6144, 2048, 8),  # MiMo-V2.5-Pro TP=1
+    (288, 4096, 2048, 8),  # GLM-5.3-Flash / Step-3.5-Flash TP=1 aux key
 ]
 
 
