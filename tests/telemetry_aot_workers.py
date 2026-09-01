@@ -13,7 +13,9 @@ import psutil
 
 DURATION_SECONDS = int(os.environ.get("AITER_TELEMETRY_SECONDS", "60"))
 SAMPLE_SECONDS = 0.02
-MEMORY_PER_WORKER_BYTES = 250 * 1024 * 1024
+MEMORY_PER_WORKER_BYTES = 2 * 1024**3
+CGROUP_TASKS_PER_WORKER = 11
+CGROUP_TASK_RESERVE = 16
 LOG_PATH = pathlib.Path("/tmp/aiter-aot-telemetry.log")
 RESULT_PATH = pathlib.Path("/tmp/aiter-aot-telemetry.json")
 
@@ -67,6 +69,14 @@ def cgroup_pids() -> int:
         return 0
 
 
+def cgroup_pids_max() -> int | None:
+    try:
+        raw = pathlib.Path("/sys/fs/cgroup/pids.max").read_text().strip()
+        return None if raw == "max" else int(raw)
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+
+
 def main() -> None:
     env = os.environ.copy()
     env.pop("MAX_JOBS", None)
@@ -75,8 +85,17 @@ def main() -> None:
     available = psutil.virtual_memory().available
     cpu_budget = max(1, (os.cpu_count() or 1) - 1)
     memory_budget = max(1, available // MEMORY_PER_WORKER_BYTES)
-    predicted_workers = min(cpu_budget, memory_budget)
     baseline_pids = cgroup_pids()
+    pids_max = cgroup_pids_max()
+    task_budget = (
+        max(1, (pids_max - baseline_pids - CGROUP_TASK_RESERVE) // CGROUP_TASKS_PER_WORKER)
+        if pids_max is not None
+        else None
+    )
+    budgets = [cpu_budget, memory_budget]
+    if task_budget is not None:
+        budgets.append(task_budget)
+    predicted_workers = min(budgets)
 
     command = [sys.executable, "-m", "aiter.aot.pa"]
     metrics = {
@@ -85,8 +104,14 @@ def main() -> None:
         "memory_per_worker_assumption_bytes": MEMORY_PER_WORKER_BYTES,
         "memory_derived_workers": memory_budget,
         "cpu_derived_workers": cpu_budget,
+        "cgroup_tasks_per_worker_assumption": CGROUP_TASKS_PER_WORKER,
+        "cgroup_task_reserve": CGROUP_TASK_RESERVE,
+        "cgroup_pids_max": pids_max,
+        "task_derived_workers": task_budget,
         "predicted_workers": predicted_workers,
         "predicted_worker_rss_bytes": predicted_workers * MEMORY_PER_WORKER_BYTES,
+        "predicted_peak_cgroup_pids": baseline_pids
+        + predicted_workers * CGROUP_TASKS_PER_WORKER,
         "baseline_cgroup_pids": baseline_pids,
         "peak_cgroup_pids": baseline_pids,
         "peak_tree_processes": 0,

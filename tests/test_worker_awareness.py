@@ -22,7 +22,9 @@ class WorkerAwarenessTest(unittest.TestCase):
     def test_four_cpu_reproduction_leaves_one_cpu_free(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
             _MODULE, "_available_memory_bytes", return_value=10 * 1024**3
-        ), patch.object(os, "cpu_count", return_value=4):
+        ), patch.object(_MODULE, "_cgroup_worker_budget", return_value=None), patch.object(
+            os, "cpu_count", return_value=4
+        ):
             self.assertEqual(get_worker_count(), 3)
             self.assertEqual(os.environ["MAX_JOBS"], "3")
 
@@ -40,10 +42,21 @@ class WorkerAwarenessTest(unittest.TestCase):
 
     def test_available_memory_caps_default_workers(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
-            _MODULE, "_available_memory_bytes", return_value=1000 * 1024**2
-        ), patch.object(os, "cpu_count", return_value=64):
+            _MODULE, "_available_memory_bytes", return_value=8 * 1024**3
+        ), patch.object(_MODULE, "_cgroup_worker_budget", return_value=None), patch.object(
+            os, "cpu_count", return_value=64
+        ):
             self.assertEqual(get_worker_count(), 4)
             self.assertEqual(os.environ["MAX_JOBS"], "4")
+
+    def test_cgroup_task_capacity_caps_default_workers(self):
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            _MODULE, "_available_memory_bytes", return_value=128 * 1024**3
+        ), patch.object(_MODULE, "_cgroup_worker_budget", return_value=7), patch.object(
+            os, "cpu_count", return_value=64
+        ):
+            self.assertEqual(get_worker_count(), 7)
+            self.assertEqual(os.environ["MAX_JOBS"], "7")
 
     def test_worker_descendants_default_to_one_job(self):
         with patch.dict(os.environ, {"MAX_JOBS": "23"}, clear=True):

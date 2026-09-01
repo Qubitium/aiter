@@ -2,7 +2,9 @@
 
 import os
 
-_MEMORY_PER_WORKER_BYTES = 250 * 1024 * 1024
+_MEMORY_PER_WORKER_BYTES = 2 * 1024**3
+_CGROUP_TASKS_PER_WORKER = 11
+_CGROUP_TASK_RESERVE = 16
 _SUBPROCESS_JOB_ENV = {
     "CMAKE_BUILD_PARALLEL_LEVEL": "1",
     "MAKEFLAGS": "-j1",
@@ -26,6 +28,21 @@ def _available_memory_bytes() -> int:
     return _MEMORY_PER_WORKER_BYTES
 
 
+def _cgroup_worker_budget() -> int | None:
+    """Return worker capacity from the cgroup task limit and measured fanout."""
+    try:
+        with open("/sys/fs/cgroup/pids.max") as max_file:
+            raw_max = max_file.read().strip()
+        if raw_max == "max":
+            return None
+        with open("/sys/fs/cgroup/pids.current") as current_file:
+            current = int(current_file.read().strip())
+        available = max(0, int(raw_max) - current - _CGROUP_TASK_RESERVE)
+        return max(1, available // _CGROUP_TASKS_PER_WORKER)
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+
+
 def configure_worker_subprocesses() -> None:
     """Force compiler descendants of an AOT worker to use one build job."""
     subprocess_jobs = os.environ.get("AITER_SUBPROCESS_MAX_JOBS", "1")
@@ -42,7 +59,7 @@ def configure_worker_subprocesses() -> None:
 
 
 def get_worker_count(default: int | None = None) -> int:
-    """Return and export a memory- and CPU-bounded top-level worker count."""
+    """Return and export a memory-, CPU-, and task-bounded worker count."""
     raw = os.environ.get("MAX_JOBS")
     if raw is not None:
         try:
@@ -52,6 +69,10 @@ def get_worker_count(default: int | None = None) -> int:
 
     cpu_budget = max(1, (os.cpu_count() or 1) - 1)
     memory_budget = max(1, _available_memory_bytes() // _MEMORY_PER_WORKER_BYTES)
-    workers = min(cpu_budget, memory_budget)
+    budgets = [cpu_budget, memory_budget]
+    task_budget = _cgroup_worker_budget()
+    if task_budget is not None:
+        budgets.append(task_budget)
+    workers = min(budgets)
     os.environ["MAX_JOBS"] = str(workers)
     return workers
