@@ -20,6 +20,8 @@ from typing import Any, Optional
 
 from packaging.version import Version, parse
 
+from aiter_worker_limits import get_cpu_worker_budget
+
 this_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, f"{this_dir}/utils/")
 from chip_info import get_gfx, get_gfx_list, get_gfx_runtime
@@ -607,7 +609,7 @@ __host__ __device__ void func(){{std::tuple<int, int> t = std::tuple(1, 1);}}" |
 def check_and_set_ninja_worker():
     if "MAX_JOBS" in os.environ:
         return
-    max_num_jobs_cores = max(1, (os.cpu_count() - 1) * 0.8)
+    max_num_jobs_cores = get_cpu_worker_budget()
     import psutil
 
     # calculate the maximum allowed NUM_JOBS based on free memory

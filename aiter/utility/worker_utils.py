@@ -2,8 +2,10 @@
 
 import os
 
-# Round the observed per-worker cold-build peak up to 1.5 GiB.
-_MEMORY_PER_WORKER_BYTES = 3 * 1024**3 // 2
+from aiter_worker_limits import get_cpu_worker_budget
+
+# Approximate observed peak RSS per worker, rounded to 1.5 GB.
+_MEMORY_PER_WORKER_BYTES = 1_500_000_000
 _CGROUP_TASKS_PER_WORKER = 12
 _CGROUP_TASK_RESERVE = 16
 _SUBPROCESS_JOB_ENV = {
@@ -70,12 +72,14 @@ def get_worker_count(default: int | None = None) -> int:
         os.environ["MAX_JOBS"] = str(workers)
         return workers
 
-    cpu_budget = max(1, (os.cpu_count() or 1) - 1)
+    cpu_budget = get_cpu_worker_budget()
     memory_budget = max(1, _available_memory_bytes() // _MEMORY_PER_WORKER_BYTES)
     budgets = [cpu_budget, memory_budget]
     task_budget = _cgroup_worker_budget()
     if task_budget is not None:
         budgets.append(task_budget)
+    # Automatic workers are bounded by 80% of CPUs, available memory divided
+    # by the observed per-worker RSS, and the cgroup task capacity when set.
     workers = max(1, min(budgets))
     os.environ["MAX_JOBS"] = str(workers)
     return workers

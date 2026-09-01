@@ -9,6 +9,7 @@ _SPEC = importlib.util.spec_from_file_location("aiter_worker_utils", _HELPER)
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 get_worker_count = _MODULE.get_worker_count
+get_cpu_worker_budget = _MODULE.get_cpu_worker_budget
 configure_worker_subprocesses = _MODULE.configure_worker_subprocesses
 
 
@@ -18,7 +19,21 @@ class WorkerAwarenessTest(unittest.TestCase):
             legacy_count = int(os.environ.get("MAX_JOBS", os.cpu_count() or 16))
             self.assertEqual(legacy_count, 4)
 
-    def test_four_cpu_reproduction_leaves_one_cpu_free(self):
+    def test_cpu_budget_uses_at_most_eighty_percent(self):
+        with patch.object(os, "cpu_count", return_value=24):
+            self.assertEqual(get_cpu_worker_budget(), 19)
+
+        with patch.object(os, "cpu_count", return_value=4):
+            self.assertEqual(get_cpu_worker_budget(), 3)
+
+    def test_cpu_budget_always_returns_at_least_one(self):
+        for logical_cpus in (None, 0, 1):
+            with self.subTest(logical_cpus=logical_cpus), patch.object(
+                os, "cpu_count", return_value=logical_cpus
+            ):
+                self.assertEqual(get_cpu_worker_budget(), 1)
+
+    def test_four_cpu_worker_count_uses_eighty_percent(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
             _MODULE, "_available_memory_bytes", return_value=10 * 1024**3
         ), patch.object(_MODULE, "_cgroup_worker_budget", return_value=None), patch.object(

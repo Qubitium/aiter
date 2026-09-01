@@ -10,10 +10,12 @@ import time
 
 import psutil
 
+from aiter.utility.worker_utils import get_cpu_worker_budget
+
 DURATION_SECONDS = int(os.environ.get("AITER_TELEMETRY_SECONDS", "60"))
 SAMPLE_SECONDS = 0.02
-# Round the observed per-worker cold-build peak up to 1.5 GiB.
-MEMORY_PER_WORKER_BYTES = 3 * 1024**3 // 2
+# Approximate observed peak RSS per worker, rounded to 1.5 GB.
+MEMORY_PER_WORKER_BYTES = 1_500_000_000
 CGROUP_TASKS_PER_WORKER = 12
 CGROUP_TASK_RESERVE = 16
 LOG_PATH = pathlib.Path("/tmp/aiter-aot-telemetry.log")
@@ -90,7 +92,7 @@ def main() -> None:
     env.setdefault("AITER_SUBPROCESS_MAX_JOBS", "1")
 
     available = psutil.virtual_memory().available
-    cpu_budget = max(1, (os.cpu_count() or 1) - 1)
+    cpu_budget = get_cpu_worker_budget()
     memory_budget = max(1, available // MEMORY_PER_WORKER_BYTES)
     baseline_pids = cgroup_pids()
     pids_max = cgroup_pids_max()

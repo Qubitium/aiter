@@ -26,6 +26,8 @@ from hipify.hipify_python import GeneratedFileCleaner
 from packaging.version import Version
 from setuptools.command.build_ext import build_ext
 
+from aiter_worker_limits import get_cpu_worker_budget
+
 IS_WINDOWS = sys.platform == "win32"
 IS_LINUX = sys.platform.startswith("linux")
 LIB_EXT = ".so"
@@ -1537,9 +1539,9 @@ def _get_num_workers(verbose: bool) -> int | None:
                 file=sys.stderr,
             )
     else:
-        max_jobs = int(max(1, (os.cpu_count() - 1) * 0.8))
+        max_jobs = get_cpu_worker_budget()
         print(
-            f"Using 0.8*cpu_cnt MAX_JOBS ({max_jobs}) as the number of workers...",
+            f"Using 80% CPU MAX_JOBS ({max_jobs}) as the number of workers...",
             file=sys.stderr,
         )
     prebuild_thread_num = os.environ.get("PREBUILD_THREAD_NUM")

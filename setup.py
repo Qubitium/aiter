@@ -10,6 +10,8 @@ import sys
 from setuptools import Distribution, setup
 from setuptools.command.build_ext import build_ext
 
+from aiter_worker_limits import get_cpu_worker_budget
+
 this_dir = os.path.dirname(os.path.abspath(__file__))
 OPT_COMPILER_CONFIG = os.path.join(this_dir, "aiter", "jit", "optCompilerConfig.json")
 PACKAGE_NAME = "amd-aiter"
@@ -30,7 +32,7 @@ if AITER_TRITON_ONLY:
 
 def getMaxJobs():
     # calculate the maximum allowed NUM_JOBS based on cores
-    max_num_jobs_cores = max(1, os.cpu_count() * 0.8)
+    max_num_jobs_cores = get_cpu_worker_budget()
 
     try:
         import psutil
@@ -482,6 +484,7 @@ setup(
     name=PACKAGE_NAME,
     use_scm_version=True,
     packages=packages,
+    py_modules=["aiter_worker_limits"],
     include_package_data=True,
     package_data={
         "": ["*"],
