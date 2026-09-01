@@ -605,7 +605,7 @@ __host__ __device__ void func(){{std::tuple<int, int> t = std::tuple(1, 1);}}" |
 
 
 def check_and_set_ninja_worker():
-    max_num_jobs_cores = max(1, os.cpu_count() * 0.8)
+    max_num_jobs_cores = max(1, (os.cpu_count() - 1) * 0.8)
     import psutil
 
     # calculate the maximum allowed NUM_JOBS based on free memory
