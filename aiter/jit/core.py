@@ -884,6 +884,7 @@ def build_module(
     third_party,
     hipify=False,
     flags_extra_hip_per_source=None,
+    ninja_workers: int | None = None,
 ):
     os.makedirs(bd_dir, exist_ok=True)
     lock_path = f"{bd_dir}/lock_{md_name}"
@@ -1084,6 +1085,7 @@ def build_module(
                 torch_exclude=torch_exclude,
                 hipify=hipify,
                 extra_cuda_cflags_per_source=flags_extra_hip_per_source,
+                ninja_workers=ninja_workers,
             )
             if is_python_module and not is_standalone:
                 shutil.copy(f"{opbd_dir}/{target_name}", f"{get_user_jit_dir()}")

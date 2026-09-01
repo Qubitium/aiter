@@ -26,7 +26,7 @@ from hipify.hipify_python import GeneratedFileCleaner
 from packaging.version import Version
 from setuptools.command.build_ext import build_ext
 
-from aiter_worker_limits import get_worker_count, get_worker_count_per_parent
+from aiter_worker_limits import get_worker_count
 
 IS_WINDOWS = sys.platform == "win32"
 IS_LINUX = sys.platform.startswith("linux")
@@ -1232,6 +1232,7 @@ def _jit_compile(
     torch_exclude=False,
     hipify=True,
     extra_cuda_cflags_per_source=None,
+    ninja_workers: int | None = None,
 ) -> None:
     if is_python_module and is_standalone:
         raise ValueError(
@@ -1338,6 +1339,7 @@ def _jit_compile(
                         is_standalone=is_standalone,
                         torch_exclude=torch_exclude,
                         extra_cuda_cflags_per_source=extra_cuda_cflags_per_source,
+                        ninja_workers=ninja_workers,
                     )
             elif verbose:
                 print(
@@ -1370,6 +1372,7 @@ def _write_ninja_file_and_compile_objects(
     build_directory: str,
     verbose: bool,
     with_cuda: bool | None,
+    ninja_workers: int | None = None,
 ) -> None:
     verify_ninja_availability()
 
@@ -1402,6 +1405,7 @@ def _write_ninja_file_and_compile_objects(
         # It would be better if we could tell users the name of the extension
         # that failed to build but there isn't a good way to get it here.
         error_prefix="Error compiling objects for extension",
+        ninja_workers=ninja_workers,
     )
 
 
@@ -1419,6 +1423,7 @@ def _write_ninja_file_and_build_library(
     is_standalone: bool = False,
     torch_exclude: bool = False,
     extra_cuda_cflags_per_source=None,
+    ninja_workers: int | None = None,
 ) -> None:
     verify_ninja_availability()
 
@@ -1452,7 +1457,10 @@ def _write_ninja_file_and_build_library(
     if verbose:
         print(f"Building extension module {name}...", file=sys.stderr)
     _run_ninja_build(
-        build_directory, verbose, error_prefix=f"Error building extension '{name}'"
+        build_directory,
+        verbose,
+        error_prefix=f"Error building extension '{name}'",
+        ninja_workers=ninja_workers,
     )
 
 
@@ -1531,29 +1539,27 @@ def _get_rocm_arch_flags(cflags: list[str] | None = None) -> list[str]:
     return flags
 
 
-def _get_num_workers(verbose: bool) -> int:
+def _get_num_workers(verbose: bool, ninja_workers: int | None = None) -> int:
+    if ninja_workers is not None:
+        return max(1, int(ninja_workers))
+
     max_jobs = get_worker_count()
     if verbose:
         print(
             f"Using AITER_MAX_JOBS ({max_jobs}) as the number of workers...",
             file=sys.stderr,
         )
-    prebuild_thread_num = os.environ.get("PREBUILD_THREAD_NUM")
-    if prebuild_thread_num is not None:
-        try:
-            parent_count = int(prebuild_thread_num)
-        except ValueError as exc:
-            raise ValueError(
-                "PREBUILD_THREAD_NUM must be an integer, "
-                f"got {prebuild_thread_num!r}"
-            ) from exc
-        max_jobs = get_worker_count_per_parent(parent_count)
     return max_jobs
 
 
-def _run_ninja_build(build_directory: str, verbose: bool, error_prefix: str) -> None:
+def _run_ninja_build(
+    build_directory: str,
+    verbose: bool,
+    error_prefix: str,
+    ninja_workers: int | None = None,
+) -> None:
     command = ["ninja", "-v"]
-    num_workers = _get_num_workers(verbose)
+    num_workers = _get_num_workers(verbose, ninja_workers=ninja_workers)
     if num_workers is not None:
         command.extend(["-j", str(num_workers)])
     env = os.environ.copy()

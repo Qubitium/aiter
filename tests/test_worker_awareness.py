@@ -12,7 +12,6 @@ get_automatic_worker_budgets = worker_limits.get_automatic_worker_budgets
 get_cpu_worker_budget = worker_limits.get_cpu_worker_budget
 get_worker_count = worker_limits.get_worker_count
 get_worker_count_for = worker_limits.get_worker_count_for
-get_worker_count_per_parent = worker_limits.get_worker_count_per_parent
 
 
 class WorkerAwarenessTest(unittest.TestCase):
@@ -261,33 +260,19 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(os.environ["MAKEFLAGS"], "-j1")
             self.assertEqual(os.environ["NINJAFLAGS"], "-j1")
 
-    def test_nested_worker_share_never_returns_zero(self):
-        with patch.dict(os.environ, {"AITER_MAX_JOBS": "1"}, clear=True):
-            self.assertEqual(get_worker_count_per_parent(5), 1)
-            self.assertEqual(get_worker_count_per_parent(0), 1)
-
-    def test_nested_worker_share_divides_the_global_budget(self):
-        with patch.dict(os.environ, {"AITER_MAX_JOBS": "19"}, clear=True):
-            self.assertEqual(get_worker_count_per_parent(5), 3)
-
     def test_work_capped_worker_count_never_returns_zero(self):
         with patch.dict(os.environ, {"AITER_MAX_JOBS": "19"}, clear=True):
             self.assertEqual(get_worker_count_for(0), 1)
             self.assertEqual(get_worker_count_for(3), 3)
 
     def test_one_job_reaches_all_descendant_controls(self):
-        with patch.dict(
-            os.environ,
-            {"PREBUILD_THREAD_NUM": "19"},
-            clear=True,
-        ):
+        with patch.dict(os.environ, {}, clear=True):
             configure_worker_subprocesses()
             self.assertEqual(os.environ["AITER_MAX_JOBS"], "1")
             self.assertEqual(os.environ["CMAKE_BUILD_PARALLEL_LEVEL"], "1")
             self.assertEqual(os.environ["MAKEFLAGS"], "-j1")
             self.assertEqual(os.environ["NINJAFLAGS"], "-j1")
             self.assertEqual(os.environ["OMP_NUM_THREADS"], "1")
-            self.assertNotIn("PREBUILD_THREAD_NUM", os.environ)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import sys
 from setuptools import Distribution, setup
 from setuptools.command.build_ext import build_ext
 
-from aiter_worker_limits import get_worker_count, get_worker_count_for
+from aiter_worker_limits import get_worker_count
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 OPT_COMPILER_CONFIG = os.path.join(this_dir, "aiter", "jit", "optCompilerConfig.json")
@@ -344,7 +344,7 @@ if PREBUILD_KERNELS != 0:
             except Exception:  # noqa: BLE001,S110
                 pass
 
-        def build_one_module(one_opt_args):
+        def build_one_module(one_opt_args, ninja_workers=None):
             flags_cc = list(one_opt_args["flags_extra_cc"]) + [
                 f"-DPREBUILD_KERNELS={PREBUILD_KERNELS}"
             ]
@@ -365,10 +365,12 @@ if PREBUILD_KERNELS != 0:
                 is_standalone=False,
                 torch_exclude=False,
                 third_party=one_opt_args["third_party"],
+                ninja_workers=ninja_workers,
             )
 
-        prebuild_thread_num = get_worker_count_for(len(all_opts_args_build))
-        os.environ["PREBUILD_THREAD_NUM"] = str(prebuild_thread_num)
+        total_workers = get_worker_count()
+        outer_workers = min(total_workers, max(1, len(all_opts_args_build)))
+        ninja_workers = max(1, total_workers // outer_workers)
 
         # --- FlyDSL AOT pre-compilation (MOE + GEMM, before CK) ---
         _prev_aot_import = os.environ.get("AITER_AOT_IMPORT")
@@ -385,8 +387,15 @@ if PREBUILD_KERNELS != 0:
                 os.environ["AITER_AOT_IMPORT"] = _prev_aot_import
 
         # --- CK kernel builds ---
-        with ThreadPoolExecutor(max_workers=prebuild_thread_num) as executor:
-            list(executor.map(build_one_module, all_opts_args_build))
+        with ThreadPoolExecutor(max_workers=outer_workers) as executor:
+            list(
+                executor.map(
+                    lambda one_opt_args: build_one_module(
+                        one_opt_args, ninja_workers=ninja_workers
+                    ),
+                    all_opts_args_build,
+                )
+            )
 
         # Retune GEMM shapes on the live GPU after the main build phase.
         if PRETUNE_MODULES:

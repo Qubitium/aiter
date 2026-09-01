@@ -214,12 +214,6 @@ def get_worker_count() -> int:
     return workers
 
 
-def get_worker_count_per_parent(parent_count: int) -> int:
-    """Return each parent's nested-worker share, never fewer than one."""
-    parents = max(1, int(parent_count))
-    return max(1, get_worker_count() // parents)
-
-
 def get_worker_count_for(work_count: int) -> int:
     """Cap the global worker budget to available work, with a floor of one."""
     return min(get_worker_count(), max(1, int(work_count)))
@@ -228,9 +222,6 @@ def get_worker_count_for(work_count: int) -> int:
 def configure_worker_subprocesses() -> None:
     """Force compiler descendants of a process-pool worker to one job."""
     os.environ[_WORKER_ENV] = "1"
-    # A process-pool child is already one of the top-level workers. Do not
-    # divide its explicit nested budget by the parent process count again.
-    os.environ.pop("PREBUILD_THREAD_NUM", None)
     os.environ.update(
         {
             "CMAKE_BUILD_PARALLEL_LEVEL": "1",
