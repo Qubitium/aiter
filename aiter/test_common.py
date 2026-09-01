@@ -83,7 +83,10 @@ def perftest(
                 end_event.record()
                 end_event.synchronize()
                 avg = start_event.elapsed_time(end_event) * 1000 / num_iters
-                logger.info(f"avg: {avg} us/iter from cuda.Event")
+                # Large tuning sweeps call this path once per candidate. Keep
+                # per-candidate timing available for diagnosis without making
+                # synchronous stderr writes part of normal benchmark wall time.
+                logger.debug(f"avg: {avg} us/iter from cuda.Event")
                 return data, avg
 
             num = num_rotate_args

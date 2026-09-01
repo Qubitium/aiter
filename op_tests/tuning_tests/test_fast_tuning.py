@@ -51,6 +51,8 @@ class TestEventTimingPath(unittest.TestCase):
                 "deepcopy",
                 side_effect=AssertionError("argument rotation entered"),
             ) as deepcopy,
+            mock.patch.object(test_common.logger, "debug") as debug_log,
+            mock.patch.object(test_common.logger, "info") as info_log,
         ):
             result, latency = test_common.run_perftest(
                 operation,
@@ -75,6 +77,8 @@ class TestEventTimingPath(unittest.TestCase):
         memory_profiling.assert_not_called()
         profiler.assert_not_called()
         deepcopy.assert_not_called()
+        self.assertEqual(debug_log.call_count, 2)
+        info_log.assert_not_called()
 
 
 class TestMultiprocessFastScan(unittest.TestCase):
