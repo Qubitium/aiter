@@ -51,16 +51,13 @@ TEST_DIR="${TEST_DIR%/}"
 # ------------------------------
 if [[ "$TEST_TYPE" == "aiter" ]]; then
     mapfile -t ALL_FILES < <(
-        {
-            find "$TEST_DIR" -maxdepth 1 -name 'test_*.py' -type f
-            find tests -maxdepth 1 -name 'test_*.py' -type f
-        } | LC_ALL=C sort
+        find "$TEST_DIR" -maxdepth 1 -name 'test_*.py' -type f | LC_ALL=C sort
     )
 elif [[ "$TEST_TYPE" == "triton" ]]; then
     mapfile -t ALL_FILES < <(find "$TEST_DIR" -name 'test_*.py' -type f | LC_ALL=C sort)
 fi
 if [[ ${#ALL_FILES[@]} -eq 0 ]]; then
-    echo "No test files found for test type: $TEST_TYPE" >&2
+    echo "No test files found: $TEST_DIR/test_*.py" >&2
     exit 1
 fi
 
