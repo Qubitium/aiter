@@ -45,9 +45,7 @@ def process_top_p_sampling_config(config) -> None:
 def process_top_k_top_p_sampling_config(config) -> None:
     # The compiled ctypes function is process-local; only success/failure
     # should cross the ProcessPoolExecutor boundary.
-    top_k_top_p_sampling_from_probs_compile(
-        config.vec_size, config.deterministic
-    )
+    top_k_top_p_sampling_from_probs_compile(config.vec_size, config.deterministic)
 
 
 def main():

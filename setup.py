@@ -29,6 +29,7 @@ if AITER_TRITON_ONLY:
     ENABLE_CK = False
     PREBUILD_KERNELS = False
 
+
 def is_develop_mode():
     for arg in sys.argv:
         if arg == "develop" or "editable" in arg:

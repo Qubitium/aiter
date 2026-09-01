@@ -120,9 +120,7 @@ def _cgroup_memory_directories() -> list[tuple[str, str]]:
         if version is None:
             continue
 
-        current = _resolve_cgroup_directory(
-            mount_root, mount_point, membership_path
-        )
+        current = _resolve_cgroup_directory(mount_root, mount_point, membership_path)
         if current is None:
             continue
 
@@ -134,7 +132,10 @@ def _cgroup_memory_directories() -> list[tuple[str, str]]:
             if current == mount_point:
                 break
             parent = os.path.dirname(current)
-            if parent == current or os.path.commonpath((mount_point, parent)) != mount_point:
+            if (
+                parent == current
+                or os.path.commonpath((mount_point, parent)) != mount_point
+            ):
                 break
             current = parent
     return directories
@@ -203,9 +204,7 @@ def get_worker_count() -> int:
         try:
             workers = max(1, int(raw))
         except ValueError as exc:
-            raise ValueError(
-                f"{_WORKER_ENV} must be an integer, got {raw!r}"
-            ) from exc
+            raise ValueError(f"{_WORKER_ENV} must be an integer, got {raw!r}") from exc
         os.environ[_WORKER_ENV] = str(workers)
         return workers
 

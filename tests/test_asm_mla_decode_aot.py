@@ -15,9 +15,9 @@ from csrc.cpp_itfs.mla import asm_mla_decode_fwd as compile_module
 
 class AsmMlaDecodeAotTest(unittest.TestCase):
     def test_config_fields_match_compile_api(self):
-        compile_parameters = tuple(inspect.signature(compile_module.compile).parameters)[
-            :6
-        ]
+        compile_parameters = tuple(
+            inspect.signature(compile_module.compile).parameters
+        )[:6]
 
         self.assertEqual(driver.MLAConfig._fields, compile_parameters)
 
@@ -62,7 +62,9 @@ class AsmMlaDecodeAotTest(unittest.TestCase):
 
         process_config, configs = executor.map.call_args.args
         self.assertIs(process_config, driver.process_config)
-        self.assertEqual([config.num_kv_splits for config in configs], list(range(1, 17)))
+        self.assertEqual(
+            [config.num_kv_splits for config in configs], list(range(1, 17))
+        )
         self.assertEqual({config.gqa_ratio for config in configs}, {16})
         self.assertEqual({config.q_dtype for config in configs}, {"__hip_bfloat16"})
         self.assertEqual({config.kv_dtype for config in configs}, {"__hip_bfloat16"})

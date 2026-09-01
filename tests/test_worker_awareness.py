@@ -115,12 +115,8 @@ class WorkerAwarenessTest(unittest.TestCase):
             v1_current.mkdir()
             (v2_current / "memory.max").write_text(str(16 * 1024**3))
             (v2_current / "memory.current").write_text(str(1 * 1024**3))
-            (v1_current / "memory.limit_in_bytes").write_text(
-                str(8 * 1024**3)
-            )
-            (v1_current / "memory.usage_in_bytes").write_text(
-                str(7 * 1024**3)
-            )
+            (v1_current / "memory.limit_in_bytes").write_text(str(8 * 1024**3))
+            (v1_current / "memory.usage_in_bytes").write_text(str(7 * 1024**3))
             cgroup_file = root / "cgroup.txt"
             mountinfo_file = root / "mountinfo.txt"
             cgroup_file.write_text("0::/container\n5:memory:/container\n")
@@ -188,7 +184,9 @@ class WorkerAwarenessTest(unittest.TestCase):
             worker_limits,
             "_cgroup_memory_remaining_bytes",
             return_value=8 * 1024**3,
-        ), patch.object(worker_limits, "_process_cpu_count", return_value=128):
+        ), patch.object(
+            worker_limits, "_process_cpu_count", return_value=128
+        ):
             self.assertEqual(get_automatic_worker_budgets(), (102, 5))
             self.assertEqual(get_worker_count(), 5)
 
@@ -200,9 +198,7 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(os.environ["AITER_MAX_JOBS"], "3")
 
     def test_explicit_aiter_max_jobs_bypasses_automatic_caps(self):
-        with patch.dict(
-            os.environ, {"AITER_MAX_JOBS": "99"}, clear=True
-        ), patch.object(
+        with patch.dict(os.environ, {"AITER_MAX_JOBS": "99"}, clear=True), patch.object(
             worker_limits, "get_automatic_worker_budgets"
         ) as automatic_budgets:
             self.assertEqual(get_worker_count(), 99)

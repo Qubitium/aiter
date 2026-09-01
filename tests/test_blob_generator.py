@@ -3,7 +3,6 @@
 import os
 import pathlib
 import shlex
-import sys
 import tempfile
 import unittest
 from subprocess import CalledProcessError
@@ -32,11 +31,13 @@ class BlobGeneratorTest(unittest.TestCase):
             self.assertTrue((blob_dir / "generated").exists())
 
     def test_run_blob_generator_prepends_repo_to_pythonpath(self):
-        with patch.dict(os.environ, {"PYTHONPATH": "/existing/path"}, clear=False):
-            with patch.object(core.subprocess, "run") as run:
-                core._run_blob_generator("generator.py --output {}", "/tmp/blob")
+        with (
+            patch.dict(os.environ, {"PYTHONPATH": "/existing/path"}, clear=False),
+            patch.object(core.subprocess, "run") as run,
+        ):
+            core._run_blob_generator("generator.py --output {}", "/tmp/blob")
 
-        command, = run.call_args.args
+        (command,) = run.call_args.args
         kwargs = run.call_args.kwargs
         self.assertIn("generator.py --output /tmp/blob", command)
         self.assertEqual(kwargs["shell"], True)
@@ -49,9 +50,11 @@ class BlobGeneratorTest(unittest.TestCase):
 
     def test_run_blob_generator_propagates_failure(self):
         failure = CalledProcessError(returncode=17, cmd="generator")
-        with patch.object(core.subprocess, "run", side_effect=failure):
-            with self.assertRaisesRegex(CalledProcessError, "17"):
-                core._run_blob_generator("generator.py --output {}", "/tmp/blob")
+        with (
+            patch.object(core.subprocess, "run", side_effect=failure),
+            self.assertRaisesRegex(CalledProcessError, "17"),
+        ):
+            core._run_blob_generator("generator.py --output {}", "/tmp/blob")
 
 
 if __name__ == "__main__":
