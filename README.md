@@ -140,7 +140,7 @@ AITER_USE_SYSTEM_TRITON=1 python3 -m pip install -e .
 
 `AITER_MAX_JOBS` is AITER's only top-level compilation-worker override. A generic `MAX_JOBS` inherited from vLLM, SGLang, PyTorch, or another parent framework is ignored and left unchanged. When `AITER_MAX_JOBS` is unset, AITER selects the smaller of 80% of the CPUs available to the current process and available memory divided by the observed 1.5 GB RSS estimate per worker.
 
-Process-pool workers force nested AITER, Ninja, CMake, Make, OpenMP, BLAS, and NumExpr compilation fanout to one. AITER does not configure or derive worker counts from cgroup PID limits.
+Process-pool workers force nested AITER, Ninja, CMake, Make, OpenMP, BLAS, and NumExpr compilation fanout to one.
 
 Examples:
 

@@ -134,7 +134,7 @@ python op_tests/test_moe_2stage.py
   is refreshed to the right version.
 - **Worker OOM / killed (exitcode -9)**: abnormal exits are auto-retried
   (`AITER_FLYDSL_AOT_MAX_RETRIES`) and the default worker count is already
-  bounded by the shared CPU, memory, and cgroup policy. If it still happens,
+  bounded by the shared CPU and memory policy. If it still happens,
   lower `AITER_MAX_JOBS`. Nested compiler fanout is fixed at one inside each
   AOT worker.
 - **A kernel hangs / never finishes**: it is killed once it exceeds
