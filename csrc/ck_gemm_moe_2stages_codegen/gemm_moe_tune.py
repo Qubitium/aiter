@@ -350,6 +350,30 @@ def _select_mxfp4_finalist(
     )
 
 
+def _select_mxfp4_accuracy_promotion(candidates, performance_finalists):
+    """Promote the most accurate candidate not already selected for speed."""
+    selected = {
+        (candidate["kernelName1"], candidate["kernelName2"])
+        for candidate in performance_finalists
+    }
+    remaining = [
+        candidate
+        for candidate in candidates
+        if (candidate["kernelName1"], candidate["kernelName2"]) not in selected
+    ]
+    if not remaining:
+        return None
+    return min(
+        remaining,
+        key=lambda candidate: (
+            float(candidate.get("err1", math.inf)),
+            float(candidate["us"]),
+            candidate["kernelName1"],
+            candidate["kernelName2"],
+        ),
+    )
+
+
 def _token_major_to_sorted_routes(
     values, sorted_ids, num_valid_ids, token_num, *, mark_padding=False
 ):
@@ -578,17 +602,17 @@ class FmoeTuner(TunerCommon):
         self.parser.add_argument(
             "--fast-scan-warmup-accuracy-checks",
             type=int,
-            default=2,
+            default=1,
             help="Untimed warm-up launches whose outputs are accuracy-checked "
-            "before the coarse measurement (default: 2). Finalists reuse the "
+            "before the coarse measurement (default: 1). Finalists reuse the "
             "coarse-stage warm state without another warm-up.",
         )
         self.parser.add_argument(
             "--fast-scan-iters",
             type=int,
-            default=8,
+            default=10,
             help="Profiled launches per candidate after the accuracy warm-up in "
-            "the coarse fast-scan pass (default: 8).",
+            "the coarse fast-scan pass (default: 10; 11 total launches).",
         )
         self.parser.add_argument(
             "--fast-scan-final-iters",
@@ -6635,9 +6659,9 @@ class Mxfp4FlydslTuner(FmoeTuner):
                 scan_data, int(row["topk"]), dtypes.bf16, activation
             )
         accuracy_checks = max(
-            0, int(getattr(args, "fast_scan_warmup_accuracy_checks", 2))
+            0, int(getattr(args, "fast_scan_warmup_accuracy_checks", 1))
         )
-        scan_iters = max(1, int(getattr(args, "fast_scan_iters", 8)))
+        scan_iters = max(1, int(getattr(args, "fast_scan_iters", 10)))
         for candidate in candidates:
             if timeout > 0:
                 signal.alarm(timeout)
@@ -6678,12 +6702,21 @@ class Mxfp4FlydslTuner(FmoeTuner):
             finalist_iters = max(
                 1, int(getattr(args, "fast_scan_final_iters", 100))
             )
-            finalists = _rank_mxfp4_candidates(
+            ranked_candidates = _rank_mxfp4_candidates(
                 successful,
                 timing_tie_ratio=MXFP4_COARSE_TIMING_TIE_RATIO,
-            )[:finalist_count]
+            )
+            performance_finalists = ranked_candidates[:finalist_count]
+            accuracy_promotion = _select_mxfp4_accuracy_promotion(
+                successful, performance_finalists
+            )
+            finalists = list(performance_finalists)
+            if accuracy_promotion is not None:
+                finalists.append(accuracy_promotion)
             print(
-                f"[mxfp4-port] retiming {len(finalists)} finalists with "
+                f"[mxfp4-port] retiming {len(performance_finalists)} performance "
+                f"finalists + {int(accuracy_promotion is not None)} "
+                f"accuracy-promoted finalist with "
                 f"no additional warm-up + {finalist_iters} profiled iterations",
                 flush=True,
             )

@@ -199,6 +199,40 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
 
         self.assertIs(selected, accurate_boundary)
 
+    def test_accuracy_promotion_selects_best_candidate_outside_speed_set(self):
+        from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
+
+        fast = self._candidate("fast")
+        fast.update(us=100.0, err1=0.03)
+        speed_finalist = self._candidate("speed_finalist")
+        speed_finalist.update(us=100.5, err1=0.02)
+        accuracy_candidate = self._candidate("accuracy_candidate")
+        accuracy_candidate.update(us=102.0, err1=0.001)
+
+        promoted = gemm_moe_tune._select_mxfp4_accuracy_promotion(
+            [fast, speed_finalist, accuracy_candidate],
+            [fast, speed_finalist],
+        )
+
+        self.assertIs(promoted, accuracy_candidate)
+
+    def test_accuracy_promotion_skips_accurate_speed_finalist(self):
+        from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
+
+        globally_accurate = self._candidate("globally_accurate")
+        globally_accurate.update(us=100.0, err1=0.001)
+        next_accurate = self._candidate("next_accurate")
+        next_accurate.update(us=102.0, err1=0.002)
+        less_accurate = self._candidate("less_accurate")
+        less_accurate.update(us=103.0, err1=0.01)
+
+        promoted = gemm_moe_tune._select_mxfp4_accuracy_promotion(
+            [globally_accurate, next_accurate, less_accurate],
+            [globally_accurate],
+        )
+
+        self.assertIs(promoted, next_accurate)
+
     def test_inaccurate_candidate_is_rejected_before_timing(self):
         from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
 
@@ -243,8 +277,8 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
         accurate = self._candidate("accurate")
         args = SimpleNamespace(
             fast_scan=True,
-            fast_scan_warmup_accuracy_checks=2,
-            fast_scan_iters=8,
+            fast_scan_warmup_accuracy_checks=1,
+            fast_scan_iters=10,
             fast_scan_final_iters=100,
             fast_scan_finalists=2,
             timeout=0,
@@ -264,7 +298,7 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
 
         def run_candidate(_row, candidate, _args, **kwargs):
             calls.append((candidate["kernelName1"], kwargs))
-            if kwargs.get("num_iters") == 8:
+            if kwargs.get("num_iters") == 10:
                 candidate["us"] = (
                     1.0 if "fast_bad" in candidate["kernelName1"] else 2.0
                 )
@@ -290,10 +324,10 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
         self.assertEqual(len(calls), 4)
         self.assertTrue(all(kwargs["reference"] == "reference" for _, kwargs in calls))
         self.assertEqual(
-            [call[1]["num_warmup"] for call in calls], [2, 2, 0, 0]
+            [call[1]["num_warmup"] for call in calls], [1, 1, 0, 0]
         )
         self.assertEqual(
-            [call[1]["num_iters"] for call in calls], [8, 8, 100, 100]
+            [call[1]["num_iters"] for call in calls], [10, 10, 100, 100]
         )
         precompile.assert_called_once()
 
@@ -303,7 +337,7 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
         tuner = gemm_moe_tune.Mxfp4FlydslTuner.__new__(
             gemm_moe_tune.Mxfp4FlydslTuner
         )
-        args = SimpleNamespace(fast_scan=True, errRatio=0.1, warmup=2, iters=8)
+        args = SimpleNamespace(fast_scan=True, errRatio=0.1, warmup=1, iters=10)
         row = {
             "expert": 8,
             "model_dim": 256,
@@ -315,7 +349,7 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
 
         def run_perftest(operation, **kwargs):
             self.assertEqual(kwargs["num_warmup"], 0)
-            self.assertEqual(kwargs["num_iters"], 8)
+            self.assertEqual(kwargs["num_iters"], 10)
             self.assertFalse(kwargs.get("use_cuda_event", False))
             self.assertEqual(kwargs["profile_warm_iters"], 0)
             self.assertEqual(kwargs["num_rotate_args"], 1)
@@ -323,12 +357,12 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
 
         with (
             mock.patch.object(
-                tuner, "_port_e2e", side_effect=["warm-1", "warm-2", "timed"]
+                tuner, "_port_e2e", side_effect=["warm", "timed"]
             ) as port,
             mock.patch.object(
                 gemm_moe_tune,
                 "cosine_diff_compare",
-                side_effect=[0.01, 0.02, 0.03],
+                side_effect=[0.01, 0.02],
             ) as compare,
             mock.patch("aiter.test_common.run_perftest", side_effect=run_perftest),
         ):
@@ -339,13 +373,13 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
                 args,
                 data="fixture",
                 reference="reference",
-                num_warmup=2,
-                num_iters=8,
+                num_warmup=1,
+                num_iters=10,
             )
 
-        self.assertEqual(port.call_count, 3)
-        self.assertEqual(compare.call_count, 3)
-        self.assertEqual(candidate["err1"], 0.03)
+        self.assertEqual(port.call_count, 2)
+        self.assertEqual(compare.call_count, 2)
+        self.assertEqual(candidate["err1"], 0.02)
 
     def test_accuracy_failure_aborts_the_current_shape(self):
         from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
@@ -356,8 +390,8 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
         candidates = [self._candidate("bad"), self._candidate("never-run")]
         args = SimpleNamespace(
             fast_scan=True,
-            fast_scan_warmup_accuracy_checks=2,
-            fast_scan_iters=8,
+            fast_scan_warmup_accuracy_checks=1,
+            fast_scan_iters=10,
             fast_scan_final_iters=100,
             fast_scan_finalists=2,
             timeout=0,

@@ -143,14 +143,18 @@ overhead and idle gaps. The scan prepares one input fixture per shape and
 builds one shared torch reference. Candidates that exceed
 `--errRatio`, return a non-finite error, or fail to launch stop the current
 shape before more candidates are generated. A shared
-`--fast-scan-warmup-accuracy-checks` control (default 2) runs untimed launches
-and validates each output before the coarse stage. The remaining candidates are
-profiled for `--fast-scan-iters` launches (default 8), and the fastest
-`--fast-scan-finalists` candidates (default 5) are revalidated and retimed for
-`--fast-scan-final-iters` profiled launches (default 100) without another
-warm-up. Every requested profiler sample is included in the active-kernel
-average. The final measured output is checked after timing as an additional
-stability guard. During coarse
+`--fast-scan-warmup-accuracy-checks` control (default 1) runs an untimed launch
+and validates its output before the coarse stage. The remaining candidates are
+profiled for `--fast-scan-iters` launches (default 10, for 11 coarse launches
+including warm-up). The fastest `--fast-scan-finalists` candidates (default 5)
+plus the most accurate candidate not already in that performance set are
+revalidated and retimed for `--fast-scan-final-iters` profiled launches
+(default 100) without another warm-up. If the globally most accurate candidate
+is already a performance finalist, the next-most-accurate unselected candidate
+is promoted instead, so one independent accuracy candidate always reaches the
+final stage when one is available. Every requested profiler sample is included
+in the active-kernel average. The final measured output is checked after timing
+as an additional stability guard. During coarse
 finalist selection, candidates whose normalized
 latency difference from the fastest member of a timing bucket is less than
 0.01 (1%) are treated as tied. Final-winner selection does not chain buckets:
