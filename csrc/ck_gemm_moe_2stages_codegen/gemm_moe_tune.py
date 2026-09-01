@@ -592,9 +592,9 @@ class FmoeTuner(TunerCommon):
             "--fast-scan",
             action="store_true",
             required=False,
-            help="Scan every candidate with lightweight timing and defer correctness "
-            "checks to --run_config. With --mxfp4-flydsl, candidates are scored "
-            "by summed active GPU-kernel time, "
+            help="Scan every candidate with lightweight timing. With "
+            "--mxfp4-flydsl, candidates are accuracy-checked and scored by "
+            "summed active GPU-kernel time; "
             "an accuracy failure aborts the current shape, and only the fastest "
             "valid candidates are retimed with "
             "--fast-scan-final-iters.",
@@ -625,7 +625,9 @@ class FmoeTuner(TunerCommon):
             "--fast-scan-finalists",
             type=int,
             default=5,
-            help="Fastest candidates to retime with full --iters (default: 5).",
+            help="Performance candidates to retime with "
+            "--fast-scan-final-iters (default: 5). One additional non-duplicate "
+            "accuracy candidate is promoted when available.",
         )
 
     @staticmethod
@@ -6653,8 +6655,7 @@ class Mxfp4FlydslTuner(FmoeTuner):
                 else ActivationType.Silu
             )
             # Build the expensive torch reference once per shape. Every coarse
-            # candidate and every finalist must pass against this same reference
-            # before its timing can advance to the next funnel stage.
+            # warm-up and every final measured output is checked against it.
             scan_reference = self._torch_ref(
                 scan_data, int(row["topk"]), dtypes.bf16, activation
             )
