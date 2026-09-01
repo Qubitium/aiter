@@ -641,7 +641,11 @@ def run_multi_pa_gluon_test(
     sinks_options=None,
     sliding_window_options=None,
 ) -> pd.DataFrame:
-    """Run all tests using bounded multiprocessing parallelism."""
+    """Run all tests using bounded multiprocessing parallelism.
+
+    The process pool is controlled exclusively by the shared AITER worker
+    policy. Set ``AITER_MAX_JOBS`` for an explicit CLI/CI override.
+    """
     if sliding_window_options is None:
         sliding_window_options = [0]
     if sinks_options is None:
@@ -805,13 +809,13 @@ def run_multi_pa_gluon_test(
     # Prepare arguments for multiprocessing
     test_args = [(config, idx + 1, total) for idx, config in enumerate(test_configs)]
 
-    num_processes = get_worker_count_for(total)
-    print(f"Using {num_processes} parallel processes\n")
+    worker_count = get_worker_count_for(total)
+    print(f"Using {worker_count} parallel processes\n")
 
     # Run tests in parallel using spawn context to avoid CUDA reinitialization issues
     mp_context = multiprocessing.get_context("spawn")
     with concurrent.futures.ProcessPoolExecutor(
-        max_workers=num_processes,
+        max_workers=worker_count,
         mp_context=mp_context,
         initializer=configure_worker_subprocesses,
     ) as executor:
