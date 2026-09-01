@@ -580,7 +580,8 @@ class FmoeTuner(TunerCommon):
             type=int,
             default=2,
             help="Untimed warm-up launches whose outputs are accuracy-checked "
-            "before each coarse and finalist measurement (default: 2).",
+            "before the coarse measurement (default: 2). Finalists reuse the "
+            "coarse-stage warm state without another warm-up.",
         )
         self.parser.add_argument(
             "--fast-scan-iters",
@@ -592,9 +593,9 @@ class FmoeTuner(TunerCommon):
         self.parser.add_argument(
             "--fast-scan-final-iters",
             type=int,
-            default=48,
-            help="Profiled launches per finalist after the accuracy warm-up "
-            "(default: 48).",
+            default=100,
+            help="Profiled launches per finalist with no additional warm-up "
+            "(default: 100).",
         )
         self.parser.add_argument(
             "--fast-scan-finalists",
@@ -6490,6 +6491,11 @@ class Mxfp4FlydslTuner(FmoeTuner):
             lambda: self._port_e2e(data, kn1, kn2, topk, ne, h, dtype),
             num_warmup=timed_warmup,
             num_iters=measured_iters,
+            # The MXFP4 funnel owns warm-up explicitly, and its closure has no
+            # rotating arguments. Count every requested profiler sample and
+            # skip the generic memory-probe launch.
+            profile_warm_iters=0 if args.fast_scan else 1,
+            num_rotate_args=1 if args.fast_scan else 0,
         )
         if reference is not None:
             # run_perftest synchronizes before returning. Validate its last
@@ -6670,7 +6676,7 @@ class Mxfp4FlydslTuner(FmoeTuner):
                 1, int(getattr(args, "fast_scan_finalists", 5))
             )
             finalist_iters = max(
-                1, int(getattr(args, "fast_scan_final_iters", 48))
+                1, int(getattr(args, "fast_scan_final_iters", 100))
             )
             finalists = _rank_mxfp4_candidates(
                 successful,
@@ -6678,8 +6684,7 @@ class Mxfp4FlydslTuner(FmoeTuner):
             )[:finalist_count]
             print(
                 f"[mxfp4-port] retiming {len(finalists)} finalists with "
-                f"{accuracy_checks} warmup-and-accuracy-check + "
-                f"{finalist_iters} measured iterations",
+                f"no additional warm-up + {finalist_iters} profiled iterations",
                 flush=True,
             )
             best = None
@@ -6694,7 +6699,7 @@ class Mxfp4FlydslTuner(FmoeTuner):
                         args,
                         data=scan_data,
                         reference=scan_reference,
-                        num_warmup=accuracy_checks,
+                        num_warmup=0,
                         num_iters=finalist_iters,
                     )
                     print(

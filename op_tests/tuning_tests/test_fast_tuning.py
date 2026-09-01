@@ -245,7 +245,7 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
             fast_scan=True,
             fast_scan_warmup_accuracy_checks=2,
             fast_scan_iters=8,
-            fast_scan_final_iters=48,
+            fast_scan_final_iters=100,
             fast_scan_finalists=2,
             timeout=0,
             errRatio=0.1,
@@ -289,10 +289,12 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
         self.assertEqual(best["kernelName1"], "g1_accurate")
         self.assertEqual(len(calls), 4)
         self.assertTrue(all(kwargs["reference"] == "reference" for _, kwargs in calls))
-        self.assertTrue(
-            all(call[1]["num_warmup"] == 2 for call in calls)
+        self.assertEqual(
+            [call[1]["num_warmup"] for call in calls], [2, 2, 0, 0]
         )
-        self.assertEqual([call[1]["num_iters"] for call in calls], [8, 8, 48, 48])
+        self.assertEqual(
+            [call[1]["num_iters"] for call in calls], [8, 8, 100, 100]
+        )
         precompile.assert_called_once()
 
     def test_warmup_outputs_are_accuracy_checks_outside_timing(self):
@@ -315,6 +317,8 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
             self.assertEqual(kwargs["num_warmup"], 0)
             self.assertEqual(kwargs["num_iters"], 8)
             self.assertFalse(kwargs.get("use_cuda_event", False))
+            self.assertEqual(kwargs["profile_warm_iters"], 0)
+            self.assertEqual(kwargs["num_rotate_args"], 1)
             return operation(), 7.0
 
         with (
@@ -354,7 +358,7 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
             fast_scan=True,
             fast_scan_warmup_accuracy_checks=2,
             fast_scan_iters=8,
-            fast_scan_final_iters=48,
+            fast_scan_final_iters=100,
             fast_scan_finalists=2,
             timeout=0,
             errRatio=0.1,
