@@ -107,7 +107,8 @@ Release automation validates that the release tag points at the matching release
 ```bash
 git clone --recursive https://github.com/ROCm/aiter.git
 cd aiter
-python3 setup.py develop
+./.github/scripts/install_triton.sh
+AITER_USE_SYSTEM_TRITON=1 python3 -m pip install -e .
 ```
 
 If you happen to forget the `--recursive` during `clone`, you can use the following command after `cd aiter`
@@ -117,7 +118,7 @@ git submodule sync && git submodule update --init --recursive
 
 ### FlyDSL
 
-AITER uses [FlyDSL](https://github.com/ROCm/FlyDSL)-based kernels across a range of operators (e.g., GEMM and MoE). FlyDSL is a required dependency and is installed automatically when you run `python3 setup.py develop`.
+AITER uses [FlyDSL](https://github.com/ROCm/FlyDSL)-based kernels across a range of operators (e.g., GEMM and MoE). FlyDSL is a required dependency and is installed automatically when you run `python3 -m pip install -e .`.
 
 To install it manually:
 
@@ -127,18 +128,25 @@ pip install -r requirements.txt
 
 ### Triton
 
-AITER includes Triton-based operators that require triton from AMD PyPI, with the correct version selected based on your ROCm installation.
+AITER includes Triton-based operators that require Triton from AMD PyPI, with the correct version selected based on your ROCm installation. For an editable installation, run the install script before `pip install -e .` as shown above.
 
-If you install with `python3 setup.py develop`, triton is installed automatically. To skip this and keep your existing triton, set:
+To keep an existing compatible Triton installation, skip the script and set:
 
 ```bash
-AITER_USE_SYSTEM_TRITON=1 python3 setup.py develop
+AITER_USE_SYSTEM_TRITON=1 python3 -m pip install -e .
 ```
 
-If you use `pip install -e .`, run the install script manually:
+### Build parallelism
+
+`AITER_MAX_JOBS` is AITER's only top-level compilation-worker override. A generic `MAX_JOBS` inherited from vLLM, SGLang, PyTorch, or another parent framework is ignored and left unchanged. When `AITER_MAX_JOBS` is unset, AITER selects the smaller of 80% of the CPUs available to the current process and available memory divided by the observed 1.5 GB RSS estimate per worker.
+
+Process-pool workers force nested AITER, Ninja, CMake, Make, OpenMP, BLAS, and NumExpr compilation fanout to one. AITER does not configure or derive worker counts from cgroup PID limits.
+
+Examples:
 
 ```bash
-./.github/scripts/install_triton.sh
+AITER_MAX_JOBS=8 python3 -m pip install -e .
+AITER_MAX_JOBS=8 python3 -m aiter.aot.pa
 ```
 
 ### Opus — Lightweight C++ Template for Kernel Development

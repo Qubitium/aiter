@@ -479,7 +479,8 @@ class BuildExtension(build_ext):
         By default, the Ninja backend uses #CPUS + 2 workers to build the
         extension. This may use up too many resources on some systems. One
         can control the number of workers by setting the `AITER_MAX_JOBS`
-        environment variable to a non-negative number.
+        environment variable to an integer. Non-positive values are normalized
+        to one worker.
     """
 
     @classmethod
@@ -1530,7 +1531,7 @@ def _get_rocm_arch_flags(cflags: list[str] | None = None) -> list[str]:
     return flags
 
 
-def _get_num_workers(verbose: bool) -> int | None:
+def _get_num_workers(verbose: bool) -> int:
     max_jobs = get_worker_count()
     if verbose:
         print(

@@ -56,7 +56,7 @@ class AsmMlaDecodeAotTest(unittest.TestCase):
                 "ProcessPoolExecutor",
                 return_value=executor,
             ) as process_pool,
-            patch.object(driver, "get_worker_count", return_value=1),
+            patch.object(driver, "get_worker_count_for", return_value=1) as workers,
         ):
             driver.main()
 
@@ -70,6 +70,7 @@ class AsmMlaDecodeAotTest(unittest.TestCase):
             max_workers=1,
             initializer=driver.configure_worker_subprocesses,
         )
+        workers.assert_called_once_with(16)
 
     def test_main_surfaces_worker_compile_errors(self):
         executor = Mock()
@@ -87,7 +88,7 @@ class AsmMlaDecodeAotTest(unittest.TestCase):
                 "ProcessPoolExecutor",
                 return_value=executor,
             ),
-            patch.object(driver, "get_worker_count", return_value=1),
+            patch.object(driver, "get_worker_count_for", return_value=1),
             self.assertRaisesRegex(RuntimeError, "compile failed"),
         ):
             driver.main()

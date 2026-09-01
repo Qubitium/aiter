@@ -6,6 +6,7 @@ from unittest.mock import patch
 import aiter_worker_limits as worker_limits
 
 configure_worker_subprocesses = worker_limits.configure_worker_subprocesses
+get_automatic_worker_budgets = worker_limits.get_automatic_worker_budgets
 get_cpu_worker_budget = worker_limits.get_cpu_worker_budget
 get_worker_count = worker_limits.get_worker_count
 get_worker_count_for = worker_limits.get_worker_count_for
@@ -36,6 +37,16 @@ class WorkerAwarenessTest(unittest.TestCase):
                 self.assertEqual(get_cpu_worker_budget(cpu_count=logical_cpus), 1)
         with patch.object(worker_limits, "_process_cpu_count", return_value=1):
             self.assertEqual(get_cpu_worker_budget(), 1)
+
+    def test_automatic_budgets_contain_only_cpu_and_memory(self):
+        with patch.object(
+            worker_limits, "get_cpu_worker_budget", return_value=6
+        ), patch.object(
+            worker_limits,
+            "_available_memory_bytes",
+            return_value=3 * worker_limits.EST_WORKER_RSS_BYTES,
+        ):
+            self.assertEqual(get_automatic_worker_budgets(), (6, 3))
 
     def test_four_cpu_worker_count_uses_eighty_percent(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
@@ -84,10 +95,13 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(get_worker_count(), 4)
             self.assertEqual(os.environ["AITER_MAX_JOBS"], "4")
 
-    def test_worker_descendants_default_to_one_job(self):
+    def test_worker_descendants_are_forced_to_one_job(self):
         with patch.dict(
             os.environ,
-            {"AITER_MAX_JOBS": "23", "MAX_JOBS": "64"},
+            {
+                "AITER_MAX_JOBS": "23",
+                "MAX_JOBS": "64",
+            },
             clear=True,
         ):
             configure_worker_subprocesses()
@@ -111,28 +125,18 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(get_worker_count_for(0), 1)
             self.assertEqual(get_worker_count_for(3), 3)
 
-    def test_zero_subprocess_jobs_is_clamped_to_one(self):
-        with patch.dict(
-            os.environ, {"AITER_SUBPROCESS_MAX_JOBS": "0"}, clear=True
-        ):
-            configure_worker_subprocesses()
-            self.assertEqual(os.environ["AITER_MAX_JOBS"], "1")
-
-    def test_explicit_subprocess_jobs_reach_all_descendant_controls(self):
+    def test_one_job_reaches_all_descendant_controls(self):
         with patch.dict(
             os.environ,
-            {
-                "AITER_SUBPROCESS_MAX_JOBS": "2",
-                "PREBUILD_THREAD_NUM": "19",
-            },
+            {"PREBUILD_THREAD_NUM": "19"},
             clear=True,
         ):
             configure_worker_subprocesses()
-            self.assertEqual(os.environ["AITER_MAX_JOBS"], "2")
-            self.assertEqual(os.environ["CMAKE_BUILD_PARALLEL_LEVEL"], "2")
-            self.assertEqual(os.environ["MAKEFLAGS"], "-j2")
-            self.assertEqual(os.environ["NINJAFLAGS"], "-j2")
-            self.assertEqual(os.environ["OMP_NUM_THREADS"], "2")
+            self.assertEqual(os.environ["AITER_MAX_JOBS"], "1")
+            self.assertEqual(os.environ["CMAKE_BUILD_PARALLEL_LEVEL"], "1")
+            self.assertEqual(os.environ["MAKEFLAGS"], "-j1")
+            self.assertEqual(os.environ["NINJAFLAGS"], "-j1")
+            self.assertEqual(os.environ["OMP_NUM_THREADS"], "1")
             self.assertNotIn("PREBUILD_THREAD_NUM", os.environ)
 
 

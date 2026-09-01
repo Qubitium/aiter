@@ -82,27 +82,19 @@ def get_worker_count_for(work_count: int) -> int:
 
 
 def configure_worker_subprocesses() -> None:
-    """Force compiler descendants of an AOT worker to use one build job."""
-    subprocess_jobs = os.environ.get("AITER_SUBPROCESS_MAX_JOBS", "1")
-    try:
-        subprocess_jobs = str(max(1, int(subprocess_jobs)))
-    except ValueError as exc:
-        raise ValueError(
-            "AITER_SUBPROCESS_MAX_JOBS must be an integer, "
-            f"got {subprocess_jobs!r}"
-        ) from exc
-    os.environ[_WORKER_ENV] = subprocess_jobs
+    """Force compiler descendants of a process-pool worker to one job."""
+    os.environ[_WORKER_ENV] = "1"
     # A process-pool child is already one of the top-level workers. Do not
     # divide its explicit nested budget by the parent process count again.
     os.environ.pop("PREBUILD_THREAD_NUM", None)
     os.environ.update(
         {
-            "CMAKE_BUILD_PARALLEL_LEVEL": subprocess_jobs,
-            "MAKEFLAGS": f"-j{subprocess_jobs}",
-            "NINJAFLAGS": f"-j{subprocess_jobs}",
-            "OMP_NUM_THREADS": subprocess_jobs,
-            "OPENBLAS_NUM_THREADS": subprocess_jobs,
-            "MKL_NUM_THREADS": subprocess_jobs,
-            "NUMEXPR_NUM_THREADS": subprocess_jobs,
+            "CMAKE_BUILD_PARALLEL_LEVEL": "1",
+            "MAKEFLAGS": "-j1",
+            "NINJAFLAGS": "-j1",
+            "OMP_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1",
         }
     )
