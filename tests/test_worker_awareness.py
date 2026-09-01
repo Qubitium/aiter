@@ -19,19 +19,19 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(legacy_count, 4)
 
     def test_four_cpu_reproduction_leaves_one_cpu_free(self):
-        with patch.dict(os.environ, {}, clear=True), patch.object(os, "cpu_count", return_value=4), patch.object(
+        with patch.dict(os.environ, {}, clear=True), patch.object(_MODULE, "_quota_cpu_count", return_value=None), patch.object(os, "cpu_count", return_value=4), patch.object(
             os, "sched_getaffinity", return_value={0, 1, 2, 3}
         ):
             self.assertEqual(get_worker_count(), 3)
 
     def test_max_jobs_cannot_exceed_cpu_budget(self):
-        with patch.dict(os.environ, {"MAX_JOBS": "99"}), patch.object(
+        with patch.dict(os.environ, {"MAX_JOBS": "99"}), patch.object(_MODULE, "_quota_cpu_count", return_value=None), patch.object(
             os, "cpu_count", return_value=4
         ), patch.object(os, "sched_getaffinity", return_value={0, 1, 2, 3}):
             self.assertEqual(get_worker_count(), 3)
 
     def test_explicit_lower_max_jobs_is_honored(self):
-        with patch.dict(os.environ, {"MAX_JOBS": "1"}), patch.object(
+        with patch.dict(os.environ, {"MAX_JOBS": "1"}), patch.object(_MODULE, "_quota_cpu_count", return_value=None), patch.object(
             os, "cpu_count", return_value=4
         ), patch.object(os, "sched_getaffinity", return_value={0, 1, 2, 3}):
             self.assertEqual(get_worker_count(), 1)
