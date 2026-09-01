@@ -83,8 +83,10 @@ Environment Variables
      - ``0``
    * - ``AITER_MAX_JOBS``
      - AITER-local parallel compilation workers. Generic ``MAX_JOBS`` from a
-       parent framework is ignored.
-     - Minimum of 80% of process-available CPUs and available-memory capacity
+       parent framework is ignored. An explicit value bypasses automatic CPU
+       and memory caps and may oversubscribe or OOM.
+     - Minimum of 80% of process-available CPUs and effective host/container
+       available-memory capacity
 
 Example Configurations
 """"""""""""""""""""""
