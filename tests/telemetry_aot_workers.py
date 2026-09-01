@@ -12,7 +12,7 @@ import psutil
 
 
 DURATION_SECONDS = int(os.environ.get("AITER_TELEMETRY_SECONDS", "60"))
-SAMPLE_SECONDS = 0.1
+SAMPLE_SECONDS = 0.02
 MEMORY_PER_WORKER_BYTES = 250 * 1024 * 1024
 LOG_PATH = pathlib.Path("/tmp/aiter-aot-telemetry.log")
 RESULT_PATH = pathlib.Path("/tmp/aiter-aot-telemetry.json")
@@ -25,9 +25,30 @@ def safe_cmdline(proc: psutil.Process) -> list[str]:
         return []
 
 
+def safe_name(proc: psutil.Process) -> str:
+    try:
+        return proc.name()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return ""
+
+
+def safe_ppid(proc: psutil.Process) -> int:
+    try:
+        return proc.ppid()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return -1
+
+
 def safe_rss(proc: psutil.Process) -> int:
     try:
         return proc.memory_info().rss
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return 0
+
+
+def safe_threads(proc: psutil.Process) -> int:
+    try:
+        return proc.num_threads()
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         return 0
 
@@ -69,6 +90,7 @@ def main() -> None:
         "baseline_cgroup_pids": baseline_pids,
         "peak_cgroup_pids": baseline_pids,
         "peak_tree_processes": 0,
+        "peak_tree_threads": 0,
         "peak_workers": 0,
         "peak_concurrent_hipconfig": 0,
         "unique_hipconfig_processes": 0,
@@ -98,17 +120,27 @@ def main() -> None:
                 metrics["peak_tree_rss_bytes"] = max(
                     metrics["peak_tree_rss_bytes"], sum(safe_rss(p) for p in tree)
                 )
+                metrics["peak_tree_threads"] = max(
+                    metrics["peak_tree_threads"], sum(safe_threads(p) for p in tree)
+                )
                 metrics["peak_cgroup_pids"] = max(
                     metrics["peak_cgroup_pids"], cgroup_pids()
                 )
 
                 forkservers = [
-                    p for p in tree if "multiprocessing.forkserver" in " ".join(safe_cmdline(p))
+                    p
+                    for p in tree
+                    if safe_ppid(p) == root.pid
+                    and "multiprocessing.forkserver" in " ".join(safe_cmdline(p))
                 ]
                 workers: list[psutil.Process] = []
                 for server in forkservers:
                     workers.extend(children(server, recursive=False))
-                workers = list({p.pid: p for p in workers}.values())
+                workers = [
+                    p
+                    for p in {p.pid: p for p in workers}.values()
+                    if "/aiter/aot/pa.py" in " ".join(safe_cmdline(p))
+                ]
                 metrics["peak_workers"] = max(metrics["peak_workers"], len(workers))
 
                 for worker in workers:
@@ -125,7 +157,10 @@ def main() -> None:
                     )
 
                 hipconfigs = [
-                    p for p in tree if pathlib.Path((safe_cmdline(p) or [""])[0]).name == "hipconfig"
+                    p
+                    for p in tree
+                    if safe_name(p) == "hipconfig"
+                    or any(pathlib.Path(arg).name == "hipconfig" for arg in safe_cmdline(p))
                 ]
                 hipconfig_pids.update(p.pid for p in hipconfigs)
                 metrics["peak_concurrent_hipconfig"] = max(
