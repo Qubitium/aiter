@@ -2,7 +2,7 @@ import concurrent.futures
 import os
 from collections import namedtuple
 
-from aiter.utility.worker_utils import get_worker_count
+from aiter.utility.worker_utils import configure_worker_subprocesses, get_worker_count
 from csrc.cpp_itfs.pa.pa_ragged import compile
 
 PAConfig = namedtuple(
@@ -96,7 +96,8 @@ def main():
                         )
 
     with concurrent.futures.ProcessPoolExecutor(
-        get_worker_count(default=16)
+        max_workers=get_worker_count(default=16),
+        initializer=configure_worker_subprocesses,
     ) as executor:
         executor.map(process_config, configs)
 

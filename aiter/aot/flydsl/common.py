@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from multiprocessing.connection import wait as wait_for_sentinels
 from typing import Any
-from aiter.utility.worker_utils import get_worker_count
+from aiter.utility.worker_utils import configure_worker_subprocesses, get_worker_count
 
 _DEFAULT_KERNEL_TIMEOUT = 1200.0
 _DEFAULT_MAX_WORKERS = 64
@@ -175,6 +175,7 @@ def _compile_one_config_for(kind: OpKind) -> Callable[..., dict[str, Any]]:
 def _run_one_to_file(
     worker: Callable[..., dict[str, Any]], kwargs: dict[str, Any], out_path: str
 ) -> None:
+    configure_worker_subprocesses()
     result = worker(**kwargs)
     tmp_path = out_path + ".tmp"
     with open(tmp_path, "w") as f:

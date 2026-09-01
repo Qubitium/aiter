@@ -3,7 +3,7 @@ import os
 from collections import namedtuple
 
 from csrc.cpp_itfs.pa.pa_v1 import compile
-from aiter.utility.worker_utils import get_worker_count
+from aiter.utility.worker_utils import configure_worker_subprocesses, get_worker_count
 
 PAConfig = namedtuple(
     "PAConfig",
@@ -103,7 +103,8 @@ def main():
                             )
 
     with concurrent.futures.ProcessPoolExecutor(
-        get_worker_count()
+        max_workers=get_worker_count(),
+        initializer=configure_worker_subprocesses,
     ) as executor:
         executor.map(process_config, configs)
 

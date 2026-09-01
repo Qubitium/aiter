@@ -10,6 +10,7 @@ _SPEC = importlib.util.spec_from_file_location("aiter_worker_utils", _HELPER)
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 get_worker_count = _MODULE.get_worker_count
+configure_worker_subprocesses = _MODULE.configure_worker_subprocesses
 
 
 class WorkerAwarenessTest(unittest.TestCase):
@@ -19,22 +20,38 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(legacy_count, 4)
 
     def test_four_cpu_reproduction_leaves_one_cpu_free(self):
-        with patch.dict(os.environ, {}, clear=True), patch.object(_MODULE, "_quota_cpu_count", return_value=None), patch.object(os, "cpu_count", return_value=4), patch.object(
-            os, "sched_getaffinity", return_value={0, 1, 2, 3}
-        ):
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            _MODULE, "_available_memory_bytes", return_value=10 * 1024**3
+        ), patch.object(os, "cpu_count", return_value=4):
             self.assertEqual(get_worker_count(), 3)
+            self.assertEqual(os.environ["MAX_JOBS"], "3")
 
-    def test_max_jobs_cannot_exceed_cpu_budget(self):
-        with patch.dict(os.environ, {"MAX_JOBS": "99"}), patch.object(_MODULE, "_quota_cpu_count", return_value=None), patch.object(
+    def test_explicit_max_jobs_is_not_capped(self):
+        with patch.dict(os.environ, {"MAX_JOBS": "99"}, clear=True), patch.object(
             os, "cpu_count", return_value=4
-        ), patch.object(os, "sched_getaffinity", return_value={0, 1, 2, 3}):
+        ):
             self.assertEqual(get_worker_count(), 99)
 
     def test_explicit_lower_max_jobs_is_honored(self):
-        with patch.dict(os.environ, {"MAX_JOBS": "1"}), patch.object(_MODULE, "_quota_cpu_count", return_value=None), patch.object(
+        with patch.dict(os.environ, {"MAX_JOBS": "1"}, clear=True), patch.object(
             os, "cpu_count", return_value=4
-        ), patch.object(os, "sched_getaffinity", return_value={0, 1, 2, 3}):
+        ):
             self.assertEqual(get_worker_count(), 1)
+
+    def test_available_memory_caps_default_workers(self):
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            _MODULE, "_available_memory_bytes", return_value=1000 * 1024**2
+        ), patch.object(os, "cpu_count", return_value=64):
+            self.assertEqual(get_worker_count(), 4)
+            self.assertEqual(os.environ["MAX_JOBS"], "4")
+
+    def test_worker_descendants_default_to_one_job(self):
+        with patch.dict(os.environ, {"MAX_JOBS": "23"}, clear=True):
+            configure_worker_subprocesses()
+            self.assertEqual(os.environ["MAX_JOBS"], "1")
+            self.assertEqual(os.environ["CMAKE_BUILD_PARALLEL_LEVEL"], "1")
+            self.assertEqual(os.environ["MAKEFLAGS"], "-j1")
+            self.assertEqual(os.environ["NINJAFLAGS"], "-j1")
 
 
 if __name__ == "__main__":
