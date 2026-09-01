@@ -70,6 +70,8 @@ def worker(
     output_keys=None,
     _arg_key_list=None,
     catastrophic_check=True,
+    use_cuda_event=False,
+    device_is_set=False,
 ):
     from aiter.test_common import run_perftest
 
@@ -77,8 +79,11 @@ def worker(
     device = torch.device(f"cuda:{gpu_id}")
     max_err_ratio = 0.0
     try:
-        torch.cuda.set_device(device)
-        args = [el.to(device) if isinstance(el, torch.Tensor) else el for el in args]
+        if not device_is_set:
+            torch.cuda.set_device(device)
+            args = [
+                el.to(device) if isinstance(el, torch.Tensor) else el for el in args
+            ]
         if output_keys is not None and _arg_key_list is not None:
             for key in output_keys:
                 if key in _arg_key_list:
@@ -90,11 +95,14 @@ def worker(
                         # through warmup/iters and will be caught by
                         # checkAllclose.
                         args[idx].fill_(float("nan"))
-        torch.cuda.synchronize()
+        if not use_cuda_event:
+            torch.cuda.synchronize()
         res = None
         us = float("inf")
         try:
-            res, us = run_perftest(func, *args, **kwargs)
+            res, us = run_perftest(
+                func, *args, use_cuda_event=use_cuda_event, **kwargs
+            )
             us = round(us, 4)
 
         except (RuntimeError, ValueError) as e:
@@ -106,11 +114,14 @@ def worker(
 
         while us == 0 and retry_count < max_retries:
             print(f"!!!! us = 0, try {retry_count + 1} run")
-            res, us = run_perftest(func, *args, **kwargs)
+            res, us = run_perftest(
+                func, *args, use_cuda_event=use_cuda_event, **kwargs
+            )
             retry_count += 1
         if us == 0:
             print(f"Warning: try run {max_retries} times, but still get 0!")
-        torch.cuda.synchronize()
+        if not use_cuda_event:
+            torch.cuda.synchronize()
         if us == -1 or res is None:
             return info, us, round(max_err_ratio, 4)
         if ref is not None:
@@ -188,7 +199,16 @@ def worker(
     return info, us, round(max_err_ratio, 4)
 
 
-def work_group(GPUIDMap, fast_mode, err_ratio, in_data, tasks, verbose=False):
+def work_group(
+    GPUIDMap,
+    fast_mode,
+    err_ratio,
+    in_data,
+    tasks,
+    verbose=False,
+    use_cuda_event=False,
+    validate_results=True,
+):
     """Work group that processes a batch of related tasks."""
     group_task = [tasks] if not isinstance(tasks, list) else tasks
     kernels_num, (input_data) = in_data
@@ -209,7 +229,12 @@ def work_group(GPUIDMap, fast_mode, err_ratio, in_data, tasks, verbose=False):
     gpuID = GPUIDMap[pid]
     device = torch.device(f"cuda:{gpuID}")
     torch.cuda.set_device(device)
-    assert ref_func is not None or ref is not None or fast_mode != 0
+    assert (
+        not validate_results
+        or ref_func is not None
+        or ref is not None
+        or fast_mode != 0
+    )
     # ref=None & ref_func=None & fast_mode=1: fast tune, not compare results, do not postprocess,return all results
     # ref=None & fast_mode=0: ref_func should be given and return best result
     # (ref!=None | ref_func!=None) & fast_mode=1: compare results and return all results, but do not postprocess
@@ -291,7 +316,9 @@ def work_group(GPUIDMap, fast_mode, err_ratio, in_data, tasks, verbose=False):
                 else args
             )
 
-            if ref_noused is not None:
+            if not validate_results:
+                ref = None
+            elif ref_noused is not None:
                 ref = ref_noused
             else:
                 ref = cached_ref
@@ -338,6 +365,9 @@ def work_group(GPUIDMap, fast_mode, err_ratio, in_data, tasks, verbose=False):
                 max_abs_delta,
                 output_keys,
                 arg_key_list,
+                True,
+                use_cuda_event,
+                True,
             )
 
             # Run worker with explicit GPU ID
@@ -359,8 +389,9 @@ def work_group(GPUIDMap, fast_mode, err_ratio, in_data, tasks, verbose=False):
             return [(tasks[0] if tasks else "unknown", float("inf"), 1.0)]
 
 
-def get_pid():
-    time.sleep(3)
+def get_pid(delay=3):
+    if delay:
+        time.sleep(delay)
     return mp.current_process().pid
 
 
@@ -373,6 +404,8 @@ def mp_tuner(
     err_ratio=0.05,
     timeout=None,
     verbose=False,  # print verbose log
+    use_cuda_event=False,
+    validate_results=True,
 ):
     """Multi-process tuner with GPU fault isolation.
 
@@ -388,6 +421,11 @@ def mp_tuner(
         shape_grouped: Group tasks by shape
         err_ratio: Error tolerance ratio
         timeout: Timeout in seconds for each task group (None = no timeout)
+        use_cuda_event: Use lightweight accelerator-event timing instead of
+            invoking the PyTorch activity profiler for every candidate.
+        validate_results: Build references and compare every candidate result.
+            Disable only for a first-pass scan whose winners are validated in
+            a separate production-operator pass.
 
     Returns:
         List of (info, latency, error_ratio) tuples
@@ -454,6 +492,8 @@ def mp_tuner(
                         in_datas[ref_data_index[k]],
                         task_group[k],
                         verbose,
+                        use_cuda_event,
+                        validate_results,
                     ),
                 ),
             )
@@ -467,7 +507,11 @@ def mp_tuner(
         initializer=_init_task_start_times,
         initargs=(task_start_times,),
     )
-    pids = [pool.apply_async(get_pid) for i in range(start_idx, mp_num)]
+    pid_delay = 0 if mp_num == 1 else 3
+    pids = [
+        pool.apply_async(get_pid, args=(pid_delay,))
+        for i in range(start_idx, mp_num)
+    ]
     gpu_map = {el.get(): i + start_idx for i, el in enumerate(pids)}
     rets_dict = submit_tasks(pool, gpu_map, range(len(task_group)))
     # Convert to list for compatibility with existing code

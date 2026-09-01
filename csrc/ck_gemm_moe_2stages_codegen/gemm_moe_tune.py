@@ -477,6 +477,26 @@ class FmoeTuner(TunerCommon):
             required=False,
             help="Tune the FlyDSL mxfp4 a4w4 port as a coupled (g1, g2) unit instead of the normal fmoe tuner.",
         )
+        self.parser.add_argument(
+            "--fast-scan",
+            action="store_true",
+            required=False,
+            help="Scan every candidate with lightweight accelerator-event timing "
+            "and defer correctness checks to --run_config. With --mxfp4-flydsl, "
+            "the fastest candidates are retimed at full --iters.",
+        )
+        self.parser.add_argument(
+            "--fast-scan-iters",
+            type=int,
+            default=5,
+            help="Iterations per candidate in the coarse fast-scan pass (default: 5).",
+        )
+        self.parser.add_argument(
+            "--fast-scan-finalists",
+            type=int,
+            default=5,
+            help="Fastest candidates to retime with full --iters (default: 5).",
+        )
 
     @staticmethod
     def weight_quant(
@@ -4990,18 +5010,34 @@ class FmoeTuner(TunerCommon):
                 _, stage, kname, blockM, *_extra = tag
                 print(f"  [dispatch] task {i}: {stage} {kname} blockM={blockM}")
 
-        in_data.append((len(all_tasks), ()))
+        if args.shape_grouped:
+            # mp_tuner expects one input descriptor per shape group. Build this
+            # after candidate filtering so kernels rejected by the regex do not
+            # inflate the group's solution count. A grouped worker can then
+            # reuse generated tensors and references across all candidates for
+            # the same shape instead of rebuilding the expert fixture once per
+            # kernel.
+            from collections import OrderedDict
+
+            grouped_counts = OrderedDict()
+            for task in all_tasks:
+                info_keys = task[0][0]
+                grouped_counts[info_keys] = grouped_counts.get(info_keys, 0) + 1
+            in_data = [(count, ()) for count in grouped_counts.values()]
+        else:
+            in_data.append((len(all_tasks), ()))
         rets = []
         if len(all_tasks) > 0:
-            ### shape_grouped should be False as multiple stages
             rets = mp_tuner(
                 all_tasks,
                 in_data,
                 mp_num,
                 True,
-                False,
+                args.shape_grouped,
                 timeout=args.timeout,
                 verbose=args.verbose,
+                use_cuda_event=args.fast_scan,
+                validate_results=not args.fast_scan,
             )
 
         # Identify failed cases
@@ -6272,7 +6308,9 @@ class Mxfp4FlydslTuner(FmoeTuner):
             doweight_stage1=False,
         )
 
-    def _run_candidate(self, row, candidate, args):
+    def _run_candidate(
+        self, row, candidate, args, data=None, num_warmup=None, num_iters=None
+    ):
         from aiter.test_common import run_perftest
 
         ne, h, e = int(row["expert"]), int(row["model_dim"]), int(row["inter_dim"])
@@ -6284,16 +6322,21 @@ class Mxfp4FlydslTuner(FmoeTuner):
             if str(row["act_type"]).endswith("Swiglu")
             else ActivationType.Silu
         )
-        data = self._prepare_case(token, h, e, ne, topk, dtype)
-        out = self._port_e2e(data, kn1, kn2, topk, ne, h, dtype)
-        ref = self._torch_ref(data, topk, dtype, activation)
-        err = cosine_diff_compare(ref, out, msg=f"port[{kn1}+{kn2}]")
-        if err is None or float(err) > args.errRatio:
-            raise RuntimeError(f"cosine err_ratio {err} > {args.errRatio}")
+        if data is None:
+            data = self._prepare_case(token, h, e, ne, topk, dtype)
+        if args.fast_scan:
+            err = 0.0
+        else:
+            out = self._port_e2e(data, kn1, kn2, topk, ne, h, dtype)
+            ref = self._torch_ref(data, topk, dtype, activation)
+            err = cosine_diff_compare(ref, out, msg=f"port[{kn1}+{kn2}]")
+            if err is None or float(err) > args.errRatio:
+                raise RuntimeError(f"cosine err_ratio {err} > {args.errRatio}")
         _, us = run_perftest(
             lambda: self._port_e2e(data, kn1, kn2, topk, ne, h, dtype),
-            num_warmup=int(args.warmup),
-            num_iters=int(args.iters),
+            num_warmup=int(args.warmup if num_warmup is None else num_warmup),
+            num_iters=int(args.iters if num_iters is None else num_iters),
+            use_cuda_event=args.fast_scan,
         )
         us = round(float(us), 4)
         candidate.update(
@@ -6331,12 +6374,36 @@ class Mxfp4FlydslTuner(FmoeTuner):
             except ValueError:
                 timeout = 0  # not on the main thread; cannot arm SIGALRM
 
-        best, failures = None, []
+        best, failures, successful = None, [], []
+        # Candidate kernels for one shape consume the same immutable inputs and
+        # shuffled weights. In scan mode, prepare that fixture once instead of
+        # regenerating and reshuffling the full expert tensors for every pair.
+        # Winner validation uses a freshly prepared case in the separate normal
+        # (non-fast-scan) or --run_config path.
+        scan_data = None
+        if args.fast_scan:
+            scan_data = self._prepare_case(
+                int(row["token"]),
+                int(row["model_dim"]),
+                int(row["inter_dim"]),
+                int(row["expert"]),
+                int(row["topk"]),
+                dtypes.bf16,
+            )
+        scan_iters = max(1, int(getattr(args, "fast_scan_iters", 5)))
+        scan_warmup = 1
         for candidate in self._candidate_rows(row):
             if timeout > 0:
                 signal.alarm(timeout)
             try:
-                us = self._run_candidate(row, candidate, args)
+                us = self._run_candidate(
+                    row,
+                    candidate,
+                    args,
+                    data=scan_data,
+                    num_warmup=scan_warmup if args.fast_scan else None,
+                    num_iters=scan_iters if args.fast_scan else None,
+                )
                 print(
                     f"[mxfp4-port] token={row['token']} inter={row['inter_dim']} "
                     f"{candidate['kernelName1']} + {candidate['kernelName2']} us={us}",
@@ -6344,6 +6411,8 @@ class Mxfp4FlydslTuner(FmoeTuner):
                 )
                 if best is None or us < float(best["us"]):
                     best = candidate
+                if args.fast_scan:
+                    successful.append(candidate)
             except Exception as exc:  # noqa: BLE001
                 failures.append(
                     f"{candidate['kernelName1']}/{candidate['kernelName2']}: {exc}"
@@ -6352,6 +6421,44 @@ class Mxfp4FlydslTuner(FmoeTuner):
             finally:
                 if timeout > 0:
                     signal.alarm(0)
+
+        if args.fast_scan and successful:
+            finalist_count = max(
+                1, int(getattr(args, "fast_scan_finalists", 5))
+            )
+            finalists = sorted(successful, key=lambda cand: float(cand["us"]))[
+                :finalist_count
+            ]
+            print(
+                f"[mxfp4-port] retiming {len(finalists)} finalists with "
+                f"{int(args.iters)} iterations",
+                flush=True,
+            )
+            best = None
+            for candidate in finalists:
+                if timeout > 0:
+                    signal.alarm(timeout)
+                try:
+                    us = self._run_candidate(
+                        row, candidate, args, data=scan_data
+                    )
+                    print(
+                        f"[mxfp4-port] finalist token={row['token']} "
+                        f"{candidate['kernelName1']} + "
+                        f"{candidate['kernelName2']} us={us}",
+                        flush=True,
+                    )
+                    if best is None or us < float(best["us"]):
+                        best = candidate
+                except Exception as exc:  # noqa: BLE001
+                    failures.append(
+                        f"finalist {candidate['kernelName1']}/"
+                        f"{candidate['kernelName2']}: {exc}"
+                    )
+                    print(f"[mxfp4-port] candidate failed: {failures[-1]}", flush=True)
+                finally:
+                    if timeout > 0:
+                        signal.alarm(0)
         if best is None:
             best = self._candidate_rows(row)[0]
             best["us"] = self.INVALID_TIME

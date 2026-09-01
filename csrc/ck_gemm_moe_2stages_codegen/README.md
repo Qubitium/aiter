@@ -135,6 +135,28 @@ python3 csrc/ck_gemm_moe_2stages_codegen/gemm_moe_tune.py \
   -i aiter/configs/untuned_fmoe.csv --run_config
 ```
 
+#### Fast MXFP4 FlyDSL scan
+
+Use `--fast-scan` with `--mxfp4-flydsl` to scan each legal coupled G1/G2
+candidate with accelerator events. The scan prepares one input fixture per
+shape, measures every candidate for `--fast-scan-iters` iterations (default 5),
+then retimes the fastest `--fast-scan-finalists` candidates (default 5) with the
+full `--iters` value.
+
+Fast scan intentionally defers correctness checks. Always validate the selected
+rows through the production operator before using or committing the table:
+
+```bash
+python3 csrc/ck_gemm_moe_2stages_codegen/gemm_moe_tune.py \
+  -i aiter/configs/model_configs/model_fp4_untuned_fmoe.csv \
+  -o aiter/configs/model_configs/model_fp4_tuned_fmoe.csv \
+  --mxfp4-flydsl --fast-scan --mp 1 --batch 1
+
+python3 csrc/ck_gemm_moe_2stages_codegen/gemm_moe_tune.py \
+  --mxfp4-flydsl \
+  --run_config aiter/configs/model_configs/model_fp4_tuned_fmoe.csv
+```
+
 #### `--compare`
 - **Type**: Flag (boolean)
 - **Default**: `False`
@@ -214,4 +236,3 @@ python3 csrc/ck_gemm_moe_2stages_codegen/gemm_moe_tune.py \
 - Only G1U1 (gate-up fused) MoE configurations are currently supported for tuning
 - Supported quantization types include: per_Token, per_1x128 (blockscale), per_1x32 (MXFP4, gfx950 only)
 - If you use flag `PREBUILD_KERNELS=1` when you install aiter, it will build moe kernels in tuned csv by default. If you want to use the new result of moe tuning, please remove `build` and `*.so` in `aiter/jit` first, then re-install aiter after finishing tune. This can take a lot of time and is not recommended.
-
