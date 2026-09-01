@@ -1,7 +1,9 @@
+"""AOT-compile sampling kernels; this module does not perform token sampling."""
+
 import concurrent.futures
 from collections import namedtuple
 
-from aiter_worker_limits import configure_worker_subprocesses, get_worker_count
+from aiter_worker_limits import configure_worker_subprocesses, get_worker_count_for
 from csrc.cpp_itfs.sampling.top_k_renorm_probs import (
     compile as top_k_renorm_probs_compile,
 )
@@ -77,20 +79,31 @@ def main():
                 )
             )
 
-    max_jobs = get_worker_count()
+    config_count = sum(
+        len(configs)
+        for configs in (
+            top_k_renorm_configs,
+            top_p_sampling_configs,
+            top_k_top_p_sampling_configs,
+        )
+    )
+    max_jobs = get_worker_count_for(config_count)
 
-    # Process all configs in parallel
+    # Submit every kernel family before consuming results so all variants may
+    # compile concurrently. Consuming each iterator still propagates failures.
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=max_jobs, initializer=configure_worker_subprocesses
     ) as executor:
-        list(executor.map(process_top_k_renorm_config, top_k_renorm_configs))
-        list(executor.map(process_top_p_sampling_config, top_p_sampling_configs))
-        list(
+        result_iterators = (
+            executor.map(process_top_k_renorm_config, top_k_renorm_configs),
+            executor.map(process_top_p_sampling_config, top_p_sampling_configs),
             executor.map(
                 process_top_k_top_p_sampling_config,
                 top_k_top_p_sampling_configs,
-            )
+            ),
         )
+        for results in result_iterators:
+            list(results)
 
 
 if __name__ == "__main__":

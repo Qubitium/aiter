@@ -61,14 +61,14 @@ import subprocess
 import sys
 import tempfile
 
-from aiter_worker_limits import get_worker_count_for
-
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _OPUS_GEMM_DIR = os.path.dirname(_HERE)  # csrc/opus_gemm
 _CSRC_DIR = os.path.dirname(_OPUS_GEMM_DIR)  # csrc
+_REPO_ROOT = os.path.dirname(_CSRC_DIR)
 
 # opus_gemm_common / codegen.* are imported the same way gen_instances.py does.
 sys.path.insert(0, _OPUS_GEMM_DIR)
+sys.path.insert(0, _REPO_ROOT)
 
 from codegen.gen_instances_gfx1250 import (
     KARGS_NAME_MAP,
@@ -81,6 +81,8 @@ from codegen.gen_instances_gfx1250 import (
 # whose .co is not on disk (so nothing downstream can register an unlaunchable
 # kid), and this script exists to create exactly those files.
 from opus_gemm_common import gfx1250_4wave_co_kernels_declared
+
+from aiter_worker_limits import get_worker_count_for
 
 # Every pre-compiled family and the pipeline header each one's device body
 # lives in. The rest of the stub (traits/kargs/body names) comes from the

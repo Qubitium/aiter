@@ -15,12 +15,15 @@ import subprocess
 import sys
 import time
 
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", ".."))
+_REPO_CSRC = os.path.normpath(
+    os.path.join(_REPO_ROOT, "csrc", "include")
+)
+sys.path.insert(0, _REPO_ROOT)
+
 from aiter_worker_limits import configure_worker_subprocesses, get_worker_count_for
 
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_REPO_CSRC = os.path.normpath(
-    os.path.join(_THIS_DIR, "..", "..", "..", "csrc", "include")
-)
 _SO_NAME = "opus_device_test.so"
 
 _CU_SOURCES = [

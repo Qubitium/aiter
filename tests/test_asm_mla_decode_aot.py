@@ -5,63 +5,24 @@ commit 01864fa8e2347421bc5c314de8b584777ea991ec. This driver previously had no
 unit-test coverage, allowing the mismatched arguments to remain unnoticed.
 """
 
-import ast
-import importlib.util
-import pathlib
-import sys
-import types
+import inspect
 import unittest
 from unittest.mock import Mock, patch
 
-_DRIVER = pathlib.Path(__file__).parents[1] / "aiter/aot/asm_mla_decode_fwd.py"
-_COMPILE_IMPL = (
-    pathlib.Path(__file__).parents[1]
-    / "csrc/cpp_itfs/mla/asm_mla_decode_fwd.py"
-)
-
-
-def load_driver(compile_mock=None):
-    compile_mock = compile_mock or Mock()
-
-    compile_module = types.ModuleType("csrc.cpp_itfs.mla.asm_mla_decode_fwd")
-    compile_module.compile = compile_mock
-    worker_module = types.ModuleType("aiter.utility.worker_utils")
-    worker_module.configure_worker_subprocesses = Mock()
-    worker_module.get_worker_count = Mock(return_value=1)
-
-    modules = {
-        "csrc": types.ModuleType("csrc"),
-        "csrc.cpp_itfs": types.ModuleType("csrc.cpp_itfs"),
-        "csrc.cpp_itfs.mla": types.ModuleType("csrc.cpp_itfs.mla"),
-        "csrc.cpp_itfs.mla.asm_mla_decode_fwd": compile_module,
-        "aiter": types.ModuleType("aiter"),
-        "aiter.utility": types.ModuleType("aiter.utility"),
-        "aiter.utility.worker_utils": worker_module,
-    }
-    spec = importlib.util.spec_from_file_location("test_asm_mla_decode_aot_driver", _DRIVER)
-    driver = importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules, modules):
-        spec.loader.exec_module(driver)
-    return driver, compile_mock
+from aiter.aot import asm_mla_decode_fwd as driver
+from csrc.cpp_itfs.mla import asm_mla_decode_fwd as compile_module
 
 
 class AsmMlaDecodeAotTest(unittest.TestCase):
     def test_config_fields_match_compile_api(self):
-        driver, _ = load_driver()
-        tree = ast.parse(_COMPILE_IMPL.read_text())
-        compile_function = next(
-            node
-            for node in tree.body
-            if isinstance(node, ast.FunctionDef) and node.name == "compile"
-        )
-        compile_parameters = tuple(
-            argument.arg for argument in compile_function.args.args[:6]
-        )
+        compile_parameters = tuple(inspect.signature(compile_module.compile).parameters)[
+            :6
+        ]
 
         self.assertEqual(driver.MLAConfig._fields, compile_parameters)
 
     def test_process_config_matches_compile_api(self):
-        driver, compile_mock = load_driver()
+        compile_mock = Mock()
         config = driver.MLAConfig(
             gqa_ratio=16,
             page_size=1,
@@ -71,7 +32,8 @@ class AsmMlaDecodeAotTest(unittest.TestCase):
             v_head_dim=512,
         )
 
-        driver.process_config(config)
+        with patch.object(driver, "compile", compile_mock):
+            driver.process_config(config)
 
         compile_mock.assert_called_once_with(
             16,
@@ -83,13 +45,19 @@ class AsmMlaDecodeAotTest(unittest.TestCase):
         )
 
     def test_main_builds_all_gqa16_split_variants(self):
-        driver, _ = load_driver()
         executor = Mock()
         executor.__enter__ = Mock(return_value=executor)
         executor.__exit__ = Mock(return_value=False)
         executor.map.return_value = iter([None] * 16)
 
-        with patch.object(driver.concurrent.futures, "ProcessPoolExecutor", return_value=executor):
+        with (
+            patch.object(
+                driver.concurrent.futures,
+                "ProcessPoolExecutor",
+                return_value=executor,
+            ) as process_pool,
+            patch.object(driver, "get_worker_count", return_value=1),
+        ):
             driver.main()
 
         process_config, configs = executor.map.call_args.args
@@ -98,9 +66,12 @@ class AsmMlaDecodeAotTest(unittest.TestCase):
         self.assertEqual({config.gqa_ratio for config in configs}, {16})
         self.assertEqual({config.q_dtype for config in configs}, {"__hip_bfloat16"})
         self.assertEqual({config.kv_dtype for config in configs}, {"__hip_bfloat16"})
+        process_pool.assert_called_once_with(
+            max_workers=1,
+            initializer=driver.configure_worker_subprocesses,
+        )
 
     def test_main_surfaces_worker_compile_errors(self):
-        driver, _ = load_driver()
         executor = Mock()
         executor.__enter__ = Mock(return_value=executor)
         executor.__exit__ = Mock(return_value=False)
@@ -116,6 +87,7 @@ class AsmMlaDecodeAotTest(unittest.TestCase):
                 "ProcessPoolExecutor",
                 return_value=executor,
             ),
+            patch.object(driver, "get_worker_count", return_value=1),
             self.assertRaisesRegex(RuntimeError, "compile failed"),
         ):
             driver.main()

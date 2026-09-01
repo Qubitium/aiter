@@ -21,7 +21,7 @@ env:
   GPU_ARCH_LIST: "gfx942;gfx950"
   AITER_TEST: "op_tests"
   AITER_WHEEL_ARTIFACT_NAME: aiter-whl-${{ github.run_id }}
-  AITER_PREBUILD_MAX_JOBS: "64"
+  AITER_MAX_JOBS: "64"
 
 jobs:
   detect_aiter_test_scope:
@@ -240,7 +240,7 @@ jobs:
           set -euo pipefail
           docker run --rm \
             --network=host \
-            -e AITER_PREBUILD_MAX_JOBS="${{ env.AITER_PREBUILD_MAX_JOBS }}" \
+            -e AITER_MAX_JOBS="${{ env.AITER_MAX_JOBS }}" \
             -e AITER_RUNNER_NAME="${RUNNER_NAME:-unknown}" \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
@@ -257,9 +257,9 @@ jobs:
               pip install --upgrade "ninja>=1.11.1" &&
               pip install --upgrade setuptools_scm &&
               pip install tabulate &&
-              echo "Prebuilding kernels with GPU_ARCHS: ${{ env.GPU_ARCH_LIST }}, PREBUILD_KERNELS: 1, and MAX_JOBS: ${AITER_PREBUILD_MAX_JOBS}" &&
+              echo "Prebuilding kernels with GPU_ARCHS: ${{ env.GPU_ARCH_LIST }}, PREBUILD_KERNELS: 1, and AITER_MAX_JOBS: ${AITER_MAX_JOBS}" &&
               export PREBUILD_KERNELS=1 &&
-              export MAX_JOBS="${AITER_PREBUILD_MAX_JOBS}" &&
+              export AITER_MAX_JOBS="${AITER_MAX_JOBS}" &&
               export GPU_ARCHS="${{ env.GPU_ARCH_LIST }}" &&
               prebuild_start=$(date +%s) &&
               set +e &&
@@ -290,7 +290,7 @@ jobs:
           AITER_RUNNER_NAME="${RUNNER_NAME:-unknown}" \
           GPU_ARCHS="${{ env.GPU_ARCH_LIST }}" \
           PREBUILD_KERNELS=1 \
-          MAX_JOBS="${{ env.AITER_PREBUILD_MAX_JOBS }}" \
+          AITER_MAX_JOBS="${{ env.AITER_MAX_JOBS }}" \
           python3 .github/scripts/aiter_prebuild_summary.py \
             --log .aiter-prebuild.log \
             --build-status "${BUILD_STATUS}" \

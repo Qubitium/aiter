@@ -9,20 +9,25 @@ CGROUP_TASKS_PER_WORKER = 12
 CGROUP_TASK_RESERVE = 16
 _CGROUP_PIDS_MAX_PATH = "/sys/fs/cgroup/pids.max"
 _CGROUP_PIDS_CURRENT_PATH = "/sys/fs/cgroup/pids.current"
-_SUBPROCESS_JOB_ENV = {
-    "CMAKE_BUILD_PARALLEL_LEVEL": "1",
-    "MAKEFLAGS": "-j1",
-    "NINJAFLAGS": "-j1",
-    "OMP_NUM_THREADS": "1",
-    "OPENBLAS_NUM_THREADS": "1",
-    "MKL_NUM_THREADS": "1",
-    "NUMEXPR_NUM_THREADS": "1",
-}
+_WORKER_ENV = "AITER_MAX_JOBS"
+
+
+def _process_cpu_count() -> int:
+    """Return CPUs available to this process, respecting affinity when possible."""
+    process_cpu_count = getattr(os, "process_cpu_count", None)
+    if process_cpu_count is not None:
+        count = process_cpu_count()
+        if count:
+            return count
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
 
 
 def get_cpu_worker_budget(cpu_count: int | None = None) -> int:
     """Return at most 80% of logical CPUs, with one worker as the floor."""
-    logical_cpus = (os.cpu_count() if cpu_count is None else cpu_count) or 1
+    logical_cpus = (_process_cpu_count() if cpu_count is None else cpu_count) or 1
     return max(1, int(logical_cpus * CPU_CORE_COUNT_UTILIZATION))
 
 
@@ -69,17 +74,19 @@ def get_automatic_worker_budgets() -> tuple[int, int, int | None]:
 def get_worker_count() -> int:
     """Return and export the single AITER CPU worker budget.
 
-    An explicit ``MAX_JOBS`` is a user override and is therefore only normalized
-    to the one-worker floor. Automatic sizing takes the minimum of the CPU,
-    available-memory, and cgroup task budgets.
+    An explicit ``AITER_MAX_JOBS`` is an AITER-local override and is therefore
+    only normalized to the one-worker floor. Automatic sizing takes the minimum
+    of the CPU, available-memory, and cgroup task budgets.
     """
-    raw = os.environ.get("MAX_JOBS")
+    raw = os.environ.get(_WORKER_ENV)
     if raw is not None:
         try:
             workers = max(1, int(raw))
         except ValueError as exc:
-            raise ValueError(f"MAX_JOBS must be an integer, got {raw!r}") from exc
-        os.environ["MAX_JOBS"] = str(workers)
+            raise ValueError(
+                f"{_WORKER_ENV} must be an integer, got {raw!r}"
+            ) from exc
+        os.environ[_WORKER_ENV] = str(workers)
         return workers
 
     cpu_budget, memory_budget, task_budget = get_automatic_worker_budgets()
@@ -87,7 +94,7 @@ def get_worker_count() -> int:
     if task_budget is not None:
         budgets.append(task_budget)
     workers = max(1, min(budgets))
-    os.environ["MAX_JOBS"] = str(workers)
+    os.environ[_WORKER_ENV] = str(workers)
     return workers
 
 
@@ -112,6 +119,18 @@ def configure_worker_subprocesses() -> None:
             "AITER_SUBPROCESS_MAX_JOBS must be an integer, "
             f"got {subprocess_jobs!r}"
         ) from exc
-    os.environ["MAX_JOBS"] = subprocess_jobs
-    for name, value in _SUBPROCESS_JOB_ENV.items():
-        os.environ[name] = value
+    os.environ[_WORKER_ENV] = subprocess_jobs
+    # A process-pool child is already one of the top-level workers. Do not
+    # divide its explicit nested budget by the parent process count again.
+    os.environ.pop("PREBUILD_THREAD_NUM", None)
+    os.environ.update(
+        {
+            "CMAKE_BUILD_PARALLEL_LEVEL": subprocess_jobs,
+            "MAKEFLAGS": f"-j{subprocess_jobs}",
+            "NINJAFLAGS": f"-j{subprocess_jobs}",
+            "OMP_NUM_THREADS": subprocess_jobs,
+            "OPENBLAS_NUM_THREADS": subprocess_jobs,
+            "MKL_NUM_THREADS": subprocess_jobs,
+            "NUMEXPR_NUM_THREADS": subprocess_jobs,
+        }
+    )

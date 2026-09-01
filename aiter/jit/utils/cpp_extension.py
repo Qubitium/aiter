@@ -478,8 +478,8 @@ class BuildExtension(build_ext):
     .. note::
         By default, the Ninja backend uses #CPUS + 2 workers to build the
         extension. This may use up too many resources on some systems. One
-        can control the number of workers by setting the `MAX_JOBS` environment
-        variable to a non-negative number.
+        can control the number of workers by setting the `AITER_MAX_JOBS`
+        environment variable to a non-negative number.
     """
 
     @classmethod
@@ -1534,7 +1534,7 @@ def _get_num_workers(verbose: bool) -> int | None:
     max_jobs = get_worker_count()
     if verbose:
         print(
-            f"Using MAX_JOBS ({max_jobs}) as the number of workers...",
+            f"Using AITER_MAX_JOBS ({max_jobs}) as the number of workers...",
             file=sys.stderr,
         )
     prebuild_thread_num = os.environ.get("PREBUILD_THREAD_NUM")

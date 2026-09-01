@@ -81,9 +81,11 @@ Environment Variables
    * - ``PREBUILD_KERNELS``
      - ``0`` = JIT only, ``1`` = core kernels, ``2`` = inference kernels, ``3`` = MHA only
      - ``0``
-   * - ``MAX_JOBS``
-     - Max parallel compilation threads
-     - Auto-calculated
+   * - ``AITER_MAX_JOBS``
+     - AITER-local parallel compilation workers. Generic ``MAX_JOBS`` from a
+       parent framework is ignored.
+     - Minimum of 80% of process-available CPUs, available-memory capacity,
+       and cgroup PID capacity when exposed
 
 Example Configurations
 """"""""""""""""""""""
