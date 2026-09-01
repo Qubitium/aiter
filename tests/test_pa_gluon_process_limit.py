@@ -11,6 +11,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 import torch
 
+from csrc.cpp_itfs import utils as cpp_itfs_utils
 from csrc.cpp_itfs.pa_gluon_aot import pa_decode_gluon_aot_prebuild as pa_gluon
 
 
@@ -46,7 +47,19 @@ class PaGluonProcessLimitTest(unittest.TestCase):
 
         worker_count.assert_called_once_with(1)
         self.assertEqual(pool.call_args.kwargs["max_workers"], 1)
+        self.assertIs(
+            pool.call_args.kwargs["initializer"],
+            pa_gluon.configure_worker_subprocesses,
+        )
         self.assertEqual(len(result), 0)
+
+    @patch.object(cpp_itfs_utils, "get_worker_count_for", return_value=1)
+    def test_nested_make_uses_one_job(self, worker_count):
+        self.assertEqual(
+            cpp_itfs_utils._make_build_command(3),
+            ["make", "build", "-j1"],
+        )
+        worker_count.assert_called_once_with(3)
 
 
 if __name__ == "__main__":
