@@ -2,8 +2,11 @@
 # Copyright (C) 2024-2026, Advanced Micro Devices, Inc. All rights reserved.
 """CPU-only regression tests for lightweight tuning scans."""
 
+import csv
 import os
+import sys
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -143,6 +146,56 @@ class TestMultiprocessFastScan(unittest.TestCase):
         self.assertIsNone(worker.call_args.args[5])
         self.assertTrue(worker.call_args.args[-2])
         self.assertTrue(worker.call_args.args[-1])
+
+
+class TestFastScanCliSafety(unittest.TestCase):
+    def test_generic_fmoe_rejects_fast_scan_before_dispatch(self):
+        from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
+
+        tuner = gemm_moe_tune.FmoeTuner.__new__(gemm_moe_tune.FmoeTuner)
+        args = SimpleNamespace(fast_scan=True)
+        with mock.patch.object(
+            gemm_moe_tune,
+            "mp_tuner",
+            side_effect=AssertionError("generic candidates were dispatched"),
+        ):
+            with self.assertRaisesRegex(ValueError, "requires --mxfp4-flydsl"):
+                tuner.tune(None, None, args)
+
+    def test_generic_parser_does_not_expose_fast_scan(self):
+        from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
+
+        tuner = gemm_moe_tune.FmoeTuner("testFmoe", [], [], "test parser")
+
+        self.assertNotIn("--fast-scan", tuner.parser._option_string_actions)
+
+    def test_mxfp4_parser_accepts_explicit_fast_scan_controls(self):
+        from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
+
+        tuner = gemm_moe_tune.Mxfp4FlydslTuner(
+            "testMxfp4", [], [], "test parser"
+        )
+        argv = [
+            "gemm_moe_tune.py",
+            "--mxfp4-flydsl",
+            "--fast-scan",
+            "--fast-scan-warmup-accuracy-checks",
+            "2",
+            "--fast-scan-iters",
+            "7",
+            "--fast-scan-final-iters",
+            "31",
+            "--fast-scan-finalists",
+            "4",
+        ]
+        with mock.patch.object(sys, "argv", argv):
+            args = tuner.parse_args()
+
+        self.assertTrue(args.fast_scan)
+        self.assertEqual(args.fast_scan_warmup_accuracy_checks, 2)
+        self.assertEqual(args.fast_scan_iters, 7)
+        self.assertEqual(args.fast_scan_final_iters, 31)
+        self.assertEqual(args.fast_scan_finalists, 4)
 
 
 class TestMxfp4AccuracyFunnel(unittest.TestCase):
@@ -304,7 +357,9 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
                 )
                 return candidate["us"]
             if "fast_bad" in candidate["kernelName1"]:
-                raise RuntimeError("finalist accuracy regression")
+                raise gemm_moe_tune.Mxfp4AccuracyError(
+                    "finalist accuracy regression"
+                )
             candidate["us"] = 2.0
             return candidate["us"]
 
@@ -367,6 +422,7 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
             mock.patch("aiter.test_common.run_perftest", side_effect=run_perftest),
         ):
             candidate = self._candidate("accurate")
+            candidate.update(err1=0.03, err2=0.025)
             tuner._run_candidate(
                 row,
                 candidate,
@@ -379,15 +435,64 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
 
         self.assertEqual(port.call_count, 2)
         self.assertEqual(compare.call_count, 2)
-        self.assertEqual(candidate["err1"], 0.02)
+        self.assertEqual(candidate["err1"], 0.03)
+        self.assertEqual(candidate["err2"], 0.03)
 
-    def test_accuracy_failure_aborts_the_current_shape(self):
+    def test_accuracy_failure_rejects_only_the_candidate(self):
         from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
 
         tuner = gemm_moe_tune.Mxfp4FlydslTuner.__new__(
             gemm_moe_tune.Mxfp4FlydslTuner
         )
-        candidates = [self._candidate("bad"), self._candidate("never-run")]
+        candidates = [self._candidate("bad"), self._candidate("good")]
+        args = SimpleNamespace(
+            fast_scan=True,
+            fast_scan_warmup_accuracy_checks=1,
+            fast_scan_iters=10,
+            fast_scan_final_iters=100,
+            fast_scan_finalists=2,
+            timeout=0,
+            errRatio=0.1,
+            warmup=2,
+            iters=101,
+        )
+        row = {
+            "token": 1,
+            "model_dim": 256,
+            "inter_dim": 256,
+            "expert": 8,
+            "topk": 2,
+            "act_type": "ActivationType.Silu",
+        }
+        with (
+            mock.patch.object(tuner, "_candidate_rows", return_value=candidates),
+            mock.patch.object(tuner, "_precompile_candidates", return_value=(2, 0)),
+            mock.patch.object(tuner, "_prepare_case", return_value="fixture"),
+            mock.patch.object(tuner, "_torch_ref", return_value="reference"),
+            mock.patch.object(tuner, "_run_candidate") as run_candidate,
+            mock.patch("builtins.print"),
+        ):
+            def candidate_result(_row, candidate, _args, **kwargs):
+                if "bad" in candidate["kernelName1"]:
+                    raise gemm_moe_tune.Mxfp4AccuracyError("warmup failed")
+                candidate.update(us=2.0, err1=0.01, err2=0.01)
+                return 2.0
+
+            run_candidate.side_effect = candidate_result
+            result = tuner._tune_one_shape(row, args)
+
+        self.assertEqual(run_candidate.call_count, 3)
+        self.assertEqual(result["kernelName1"], "g1_good")
+        self.assertEqual(result["us"], 2.0)
+
+    def test_shape_fails_only_when_no_accurate_candidate_survives(self):
+        from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
+
+        tuner = gemm_moe_tune.Mxfp4FlydslTuner.__new__(
+            gemm_moe_tune.Mxfp4FlydslTuner
+        )
+        tuner.keys = ["token", "model_dim", "inter_dim", "expert", "topk"]
+        candidates = [self._candidate("bad-1"), self._candidate("bad-2")]
         args = SimpleNamespace(
             fast_scan=True,
             fast_scan_warmup_accuracy_checks=1,
@@ -421,9 +526,35 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
         ):
             result = tuner._tune_one_shape(row, args)
 
-        self.assertEqual(run_candidate.call_count, 1)
+        self.assertEqual(run_candidate.call_count, 2)
         self.assertEqual(result["us"], tuner.INVALID_TIME)
-        self.assertTrue(result["kernelName1"].startswith("FAILED accuracy:"))
+        self.assertTrue(result["kernelName1"].startswith("FAILED:"))
+
+
+class TestGlm53TunedArtifact(unittest.TestCase):
+    def test_token_one_row_matches_validated_coupled_winner(self):
+        from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
+
+        repo = Path(gemm_moe_tune.__file__).parents[2]
+        config = repo / "aiter/configs/model_configs/glm53_fp4_tuned_fmoe.csv"
+        with config.open(newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        token_one = next(row for row in rows if row["token"] == "1")
+
+        self.assertEqual(len(rows), 16)
+        self.assertEqual(
+            token_one["kernelName1"],
+            "flydsl_mxmoe_g1_a4w4_16x256x256_f16in_nt",
+        )
+        self.assertEqual(
+            token_one["kernelName2"],
+            "flydsl_moe2_layout_afp4_wfp4_bf16_t16x128x256_atomic_nt_sbm16",
+        )
+        self.assertGreater(float(token_one["us"]), 0.0)
+        self.assertEqual(float(token_one["us1"]), float(token_one["us"]))
+        self.assertEqual(float(token_one["us2"]), 0.0)
+        self.assertGreater(float(token_one["err1"]), 0.0)
+        self.assertGreater(float(token_one["err2"]), 0.0)
 
 
 class TestParallelMxfp4Precompile(unittest.TestCase):

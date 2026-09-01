@@ -545,6 +545,8 @@ _GEN_DATA_1STAGE_KEYS = [
 
 
 class FmoeTuner(TunerCommon):
+    SUPPORTS_FAST_SCAN = False
+
     ARG_DEFAULTS: ClassVar[dict[str, Any]] = {
         **TunerCommon.ARG_DEFAULTS,
         "verbose": False,
@@ -588,47 +590,18 @@ class FmoeTuner(TunerCommon):
             required=False,
             help="Tune the FlyDSL mxfp4 a4w4 port as a coupled (g1, g2) unit instead of the normal fmoe tuner.",
         )
-        self.parser.add_argument(
-            "--fast-scan",
-            action="store_true",
-            required=False,
-            help="Scan every candidate with lightweight timing. With "
-            "--mxfp4-flydsl, candidates are accuracy-checked and scored by "
-            "summed active GPU-kernel time; "
-            "an accuracy failure aborts the current shape, and only the fastest "
-            "valid candidates are retimed with "
-            "--fast-scan-final-iters.",
-        )
-        self.parser.add_argument(
-            "--fast-scan-warmup-accuracy-checks",
-            type=int,
-            default=1,
-            help="Untimed warm-up launches whose outputs are accuracy-checked "
-            "before the coarse measurement (default: 1). Finalists reuse the "
-            "coarse-stage warm state without another warm-up.",
-        )
-        self.parser.add_argument(
-            "--fast-scan-iters",
-            type=int,
-            default=10,
-            help="Profiled launches per candidate after the accuracy warm-up in "
-            "the coarse fast-scan pass (default: 10; 11 total launches).",
-        )
-        self.parser.add_argument(
-            "--fast-scan-final-iters",
-            type=int,
-            default=100,
-            help="Profiled launches per finalist with no additional warm-up "
-            "(default: 100).",
-        )
-        self.parser.add_argument(
-            "--fast-scan-finalists",
-            type=int,
-            default=5,
-            help="Performance candidates to retime with "
-            "--fast-scan-final-iters (default: 5). One additional non-duplicate "
-            "accuracy candidate is promoted when available.",
-        )
+
+    def parse_args(self):
+        args = super().parse_args()
+        if getattr(args, "fast_scan", False) and not self.SUPPORTS_FAST_SCAN:
+            self.parser.error("--fast-scan requires --mxfp4-flydsl")
+        if not hasattr(args, "fast_scan"):
+            args.fast_scan = False
+        return args
+
+    def _require_supported_fast_scan(self, args):
+        if getattr(args, "fast_scan", False) and not self.SUPPORTS_FAST_SCAN:
+            raise ValueError("--fast-scan requires --mxfp4-flydsl")
 
     @staticmethod
     def weight_quant(
@@ -5030,6 +5003,7 @@ class FmoeTuner(TunerCommon):
         tunedf,
         args,
     ):
+        self._require_supported_fast_scan(args)
         mp_num = args.mp
         blockMs = [16, 32, 64, 128]
         keys = self.keys
@@ -6181,6 +6155,7 @@ class GroupedFmoeTuner(FmoeTuner):
                 pass
 
     def tune(self, untunedf, tunedf, args):
+        self._require_supported_fast_scan(args)
         del tunedf
         rows = []
         for _, row in untunedf.iterrows():
@@ -6240,6 +6215,50 @@ class Mxfp4FlydslTuner(FmoeTuner):
     """Tune the FlyDSL mxfp4 a4w4 *port* (flydsl_mxmoe_g{1,2}_a4w4_*) as one coupled
     unit.
     """
+
+    SUPPORTS_FAST_SCAN = True
+
+    def _setup_specific_arguments(self):
+        super()._setup_specific_arguments()
+        self.parser.add_argument(
+            "--fast-scan",
+            action="store_true",
+            required=False,
+            help="Scan every candidate with lightweight timing. Candidates are "
+            "accuracy-checked and scored by summed active GPU-kernel time; "
+            "inaccurate candidates are skipped, and only the fastest valid "
+            "candidates are retimed with --fast-scan-final-iters.",
+        )
+        self.parser.add_argument(
+            "--fast-scan-warmup-accuracy-checks",
+            type=int,
+            default=1,
+            help="Untimed warm-up launches whose outputs are accuracy-checked "
+            "before the coarse measurement (default: 1). Finalists reuse the "
+            "coarse-stage warm state without another warm-up.",
+        )
+        self.parser.add_argument(
+            "--fast-scan-iters",
+            type=int,
+            default=10,
+            help="Profiled launches per candidate after the accuracy warm-up in "
+            "the coarse fast-scan pass (default: 10; 11 total launches).",
+        )
+        self.parser.add_argument(
+            "--fast-scan-final-iters",
+            type=int,
+            default=100,
+            help="Profiled launches per finalist with no additional warm-up "
+            "(default: 100).",
+        )
+        self.parser.add_argument(
+            "--fast-scan-finalists",
+            type=int,
+            default=5,
+            help="Performance candidates to retime with "
+            "--fast-scan-final-iters (default: 5). One additional non-duplicate "
+            "accuracy candidate is promoted when available.",
+        )
 
     ARG_DEFAULTS: ClassVar[dict[str, Any]] = {
         **FmoeTuner.ARG_DEFAULTS,
@@ -6456,6 +6475,14 @@ class Mxfp4FlydslTuner(FmoeTuner):
         token, topk = int(row["token"]), int(row["topk"])
         dtype = dtypes.bf16
         kn1, kn2 = candidate["kernelName1"], candidate["kernelName2"]
+        previously_observed_errors = []
+        for field in ("err1", "err2"):
+            try:
+                observed = float(candidate.get(field, 0.0))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(observed):
+                previously_observed_errors.append(observed)
         activation = (
             ActivationType.Swiglu
             if str(row["act_type"]).endswith("Swiglu")
@@ -6529,9 +6556,17 @@ class Mxfp4FlydslTuner(FmoeTuner):
             # instability without changing reported kernel-active latency.
             accuracy_errors.append(validate_output(timed_out, "measured output"))
             err = max(accuracy_errors)
+        # Final retiming updates the same candidate dict used by the coarse pass.
+        # Never let a later observation erase a larger error already seen for
+        # this candidate.
+        if previously_observed_errors:
+            err = max(float(err), *previously_observed_errors)
         us = round(float(us), 4)
         candidate.update(
             {
+                # This port is profiled as one coupled sorting + G1 + G2
+                # operation. Store that complete score in us/us1; us2 remains
+                # zero because no separate stage-2 timing is measured.
                 "us1": us,
                 "us": us,
                 "err1": round(float(err), 6),
@@ -6625,15 +6660,6 @@ class Mxfp4FlydslTuner(FmoeTuner):
         best, failures, successful = None, [], []
         candidates = self._candidate_rows(row)
 
-        def failed_shape(reason):
-            failed = candidates[0].copy()
-            failed["us"] = self.INVALID_TIME
-            failed["kernelName1"] = f"FAILED accuracy: {reason}"[:240]
-            print(
-                f"[mxfp4-port] aborting shape after accuracy failure: {reason}",
-                flush=True,
-            )
-            return failed
         # Candidate kernels for one shape consume the same immutable inputs and
         # shuffled weights. In scan mode, prepare that fixture once instead of
         # regenerating and reshuffling the full expert tensors for every pair.
@@ -6686,7 +6712,13 @@ class Mxfp4FlydslTuner(FmoeTuner):
                 if args.fast_scan:
                     successful.append(candidate)
             except Mxfp4AccuracyError as exc:
-                return failed_shape(str(exc))
+                failures.append(
+                    f"{candidate['kernelName1']}/{candidate['kernelName2']}: "
+                    f"accuracy {exc}"
+                )
+                print(
+                    f"[mxfp4-port] candidate rejected: {failures[-1]}", flush=True
+                )
             except Exception as exc:  # noqa: BLE001
                 failures.append(
                     f"{candidate['kernelName1']}/{candidate['kernelName2']}: {exc}"
@@ -6744,7 +6776,14 @@ class Mxfp4FlydslTuner(FmoeTuner):
                     )
                     retimed.append(candidate)
                 except Mxfp4AccuracyError as exc:
-                    return failed_shape(str(exc))
+                    failures.append(
+                        f"finalist {candidate['kernelName1']}/"
+                        f"{candidate['kernelName2']}: accuracy {exc}"
+                    )
+                    print(
+                        f"[mxfp4-port] finalist rejected: {failures[-1]}",
+                        flush=True,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     failures.append(
                         f"finalist {candidate['kernelName1']}/"
