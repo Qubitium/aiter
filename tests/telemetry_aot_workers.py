@@ -14,7 +14,7 @@ import psutil
 DURATION_SECONDS = int(os.environ.get("AITER_TELEMETRY_SECONDS", "60"))
 SAMPLE_SECONDS = 0.02
 MEMORY_PER_WORKER_BYTES = 2 * 1024**3
-CGROUP_TASKS_PER_WORKER = 11
+CGROUP_TASKS_PER_WORKER = 12
 CGROUP_TASK_RESERVE = 16
 LOG_PATH = pathlib.Path("/tmp/aiter-aot-telemetry.log")
 RESULT_PATH = pathlib.Path("/tmp/aiter-aot-telemetry.json")
