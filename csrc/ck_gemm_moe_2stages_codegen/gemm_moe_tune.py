@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2024-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+import argparse
 import functools
 import math
 import os
@@ -272,11 +273,22 @@ def cosine_diff_compare(ref, res, msg="", printLog=True):
 
 
 class Mxfp4AccuracyError(RuntimeError):
-    """An MXFP4 accuracy gate failed and the current shape must stop."""
+    """An MXFP4 candidate failed its numerical accuracy gate."""
 
 
 MXFP4_COARSE_TIMING_TIE_RATIO = 0.01
 MXFP4_FINAL_GLOBAL_TIMING_GATE = 0.01
+
+
+def _parse_fast_scan_iters(value):
+    """Require enough profiler samples for ``get_trace_perf``."""
+    try:
+        value = int(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("must be an integer >= 2") from exc
+    if value < 2:
+        raise argparse.ArgumentTypeError("must be >= 2 for profiler timing")
+    return value
 
 
 def _normalized_latency_difference(latency, fastest_latency):
@@ -322,6 +334,18 @@ def _rank_mxfp4_candidates(
     if bucket:
         flush_bucket()
     return ranked
+
+
+def _select_mxfp4_performance_finalists(candidates, finalist_count):
+    """Select the lowest-latency coarse survivors, including the fastest one."""
+    return sorted(
+        candidates,
+        key=lambda candidate: (
+            float(candidate["us"]),
+            candidate["kernelName1"],
+            candidate["kernelName2"],
+        ),
+    )[:finalist_count]
 
 
 def _select_mxfp4_finalist(
@@ -5142,8 +5166,6 @@ class FmoeTuner(TunerCommon):
                 args.shape_grouped,
                 timeout=args.timeout,
                 verbose=args.verbose,
-                use_cuda_event=args.fast_scan,
-                validate_results=not args.fast_scan,
             )
 
         # Identify failed cases
@@ -6239,17 +6261,17 @@ class Mxfp4FlydslTuner(FmoeTuner):
         )
         self.parser.add_argument(
             "--fast-scan-iters",
-            type=int,
+            type=_parse_fast_scan_iters,
             default=10,
             help="Profiled launches per candidate after the accuracy warm-up in "
-            "the coarse fast-scan pass (default: 10; 11 total launches).",
+            "the coarse fast-scan pass (default: 10; must be >= 2).",
         )
         self.parser.add_argument(
             "--fast-scan-final-iters",
-            type=int,
+            type=_parse_fast_scan_iters,
             default=100,
             help="Profiled launches per finalist with no additional warm-up "
-            "(default: 100).",
+            "(default: 100; must be >= 2).",
         )
         self.parser.add_argument(
             "--fast-scan-finalists",
@@ -6688,7 +6710,9 @@ class Mxfp4FlydslTuner(FmoeTuner):
         accuracy_checks = max(
             0, int(getattr(args, "fast_scan_warmup_accuracy_checks", 1))
         )
-        scan_iters = max(1, int(getattr(args, "fast_scan_iters", 10)))
+        scan_iters = _parse_fast_scan_iters(
+            getattr(args, "fast_scan_iters", 10)
+        )
         for candidate in candidates:
             if timeout > 0:
                 signal.alarm(timeout)
@@ -6732,30 +6756,51 @@ class Mxfp4FlydslTuner(FmoeTuner):
             finalist_count = max(
                 1, int(getattr(args, "fast_scan_finalists", 5))
             )
-            finalist_iters = max(
-                1, int(getattr(args, "fast_scan_final_iters", 100))
+            finalist_iters = _parse_fast_scan_iters(
+                getattr(args, "fast_scan_final_iters", 100)
             )
             ranked_candidates = _rank_mxfp4_candidates(
                 successful,
                 timing_tie_ratio=MXFP4_COARSE_TIMING_TIE_RATIO,
             )
-            performance_finalists = ranked_candidates[:finalist_count]
+            # Final timing must include the actual coarse global fastest. The
+            # coarse rank intentionally prefers accuracy inside timing buckets,
+            # so taking its first N entries could otherwise drop that anchor.
+            performance_finalists = _select_mxfp4_performance_finalists(
+                successful, finalist_count
+            )
             accuracy_promotion = _select_mxfp4_accuracy_promotion(
                 successful, performance_finalists
             )
             finalists = list(performance_finalists)
             if accuracy_promotion is not None:
                 finalists.append(accuracy_promotion)
+            finalist_target = min(
+                len(successful), finalist_count + int(accuracy_promotion is not None)
+            )
+            finalist_queue = []
+            finalist_keys = set()
+            for candidate in finalists + ranked_candidates:
+                candidate_key = (
+                    candidate["kernelName1"],
+                    candidate["kernelName2"],
+                )
+                if candidate_key not in finalist_keys:
+                    finalist_keys.add(candidate_key)
+                    finalist_queue.append(candidate)
             print(
                 f"[mxfp4-port] retiming {len(performance_finalists)} performance "
                 f"finalists + {int(accuracy_promotion is not None)} "
                 f"accuracy-promoted finalist with "
-                f"no additional warm-up + {finalist_iters} profiled iterations",
+                f"no additional warm-up + {finalist_iters} profiled iterations; "
+                f"backfilling to {finalist_target} successful retimes",
                 flush=True,
             )
             best = None
             retimed = []
-            for candidate in finalists:
+            for candidate in finalist_queue:
+                if len(retimed) >= finalist_target:
+                    break
                 if timeout > 0:
                     signal.alarm(timeout)
                 try:

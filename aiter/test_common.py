@@ -12,27 +12,12 @@ import torch.profiler as tpf
 from aiter import logger
 
 pd.set_option("display.max_rows", 200)
-_CUDA_EVENT_PAIRS = {}
 ## debug ##
 # pd.set_option("display.max_rows", None)
 # pd.set_option("display.max_columns", None)
 # pd.set_option("display.width", None)
 # pd.set_option("display.max_colwidth", None)
 # pd.set_option("display.expand_frame_repr", False)
-
-
-def _get_cuda_event_pair():
-    """Reuse timing events within a process; creating HIP events is expensive."""
-    device = torch.cuda.current_device()
-    pair = _CUDA_EVENT_PAIRS.get(device)
-    if pair is None:
-        pair = (
-            torch.cuda.Event(enable_timing=True),
-            torch.cuda.Event(enable_timing=True),
-        )
-        _CUDA_EVENT_PAIRS[device] = pair
-    return pair
-
 
 def ensure_spawn_method():
     """
@@ -70,26 +55,6 @@ def perftest(
 ):
     def decorator(func):
         def wrapper(*args, **kwargs):
-            if use_cuda_event:
-                # The explicit event path is used for large tuning sweeps. It
-                # must not enter cache-rotation setup: device-memory profiling,
-                # allocator-stat resets, argument copies, and memory queries
-                # add a synchronization-heavy fixed cost to every candidate.
-                run_iters(num_warmup, func, *args, **kwargs)
-                start_event, end_event = _get_cuda_event_pair()
-                # Stream ordering places the start event after all warmups;
-                # only the end event needs a host-side wait.
-                start_event.record()
-                data = run_iters(num_iters, func, *args, **kwargs)
-                end_event.record()
-                end_event.synchronize()
-                avg = start_event.elapsed_time(end_event) * 1000 / num_iters
-                # Large tuning sweeps call this path once per candidate. Keep
-                # per-candidate timing available for diagnosis without making
-                # synchronous stderr writes part of normal benchmark wall time.
-                logger.debug(f"avg: {avg} us/iter from cuda.Event")
-                return data, avg
-
             num = num_rotate_args
             if num < 1:
                 gpu_id = torch.cuda.current_device()
@@ -112,7 +77,7 @@ def perftest(
             ] + [(args, kwargs)]
             run_iters(num_warmup, func, *args, **kwargs)
             torch.cuda.synchronize()
-            if int(os.environ.get("AITER_LOG_MORE", "0")):
+            if int(os.environ.get("AITER_LOG_MORE", "0")) or use_cuda_event:
                 latencies = []
                 start_event = torch.cuda.Event(enable_timing=True)
                 end_event = torch.cuda.Event(enable_timing=True)
@@ -125,6 +90,8 @@ def perftest(
                     torch.cuda.empty_cache()
                 avg = np.mean(latencies) * 1000
                 logger.info(f"avg: {avg} us/iter from cuda.Event")
+                if use_cuda_event:
+                    return data, avg
 
             with tpf.profile(
                 activities=[tpf.ProfilerActivity.CPU, tpf.ProfilerActivity.CUDA],

@@ -3,149 +3,11 @@
 """CPU-only regression tests for lightweight tuning scans."""
 
 import csv
-import os
 import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-
-
-class _FakeEvent:
-    def record(self):
-        pass
-
-    def synchronize(self):
-        pass
-
-    def elapsed_time(self, _other):
-        return 0.009
-
-
-class TestEventTimingPath(unittest.TestCase):
-    def test_explicit_event_timing_skips_memory_and_profiler_setup(self):
-        from aiter import test_common
-
-        calls = []
-
-        def operation():
-            calls.append(None)
-            return len(calls)
-
-        test_common._CUDA_EVENT_PAIRS.clear()
-        self.addCleanup(test_common._CUDA_EVENT_PAIRS.clear)
-        with (
-            mock.patch.object(
-                test_common.torch.cuda, "Event", side_effect=lambda **_kw: _FakeEvent()
-            ) as event,
-            mock.patch.object(test_common.torch.cuda, "current_device", return_value=0),
-            mock.patch.object(test_common.torch.cuda, "synchronize") as synchronize,
-            mock.patch.object(
-                test_common,
-                "device_memory_profiling",
-                side_effect=AssertionError("memory profiling entered"),
-            ) as memory_profiling,
-            mock.patch.object(
-                test_common.tpf,
-                "profile",
-                side_effect=AssertionError("PyTorch profiler entered"),
-            ) as profiler,
-            mock.patch.object(
-                test_common.copy,
-                "deepcopy",
-                side_effect=AssertionError("argument rotation entered"),
-            ) as deepcopy,
-            mock.patch.object(test_common.logger, "debug") as debug_log,
-            mock.patch.object(test_common.logger, "info") as info_log,
-        ):
-            result, latency = test_common.run_perftest(
-                operation,
-                num_warmup=2,
-                num_iters=3,
-                use_cuda_event=True,
-            )
-            second_result, second_latency = test_common.run_perftest(
-                operation,
-                num_warmup=2,
-                num_iters=3,
-                use_cuda_event=True,
-            )
-
-        self.assertEqual(result, 5)
-        self.assertEqual(second_result, 10)
-        self.assertEqual(len(calls), 10)
-        self.assertAlmostEqual(latency, 3.0)
-        self.assertAlmostEqual(second_latency, 3.0)
-        self.assertEqual(event.call_count, 2)
-        synchronize.assert_not_called()
-        memory_profiling.assert_not_called()
-        profiler.assert_not_called()
-        deepcopy.assert_not_called()
-        self.assertEqual(debug_log.call_count, 2)
-        info_log.assert_not_called()
-
-
-class TestMultiprocessFastScan(unittest.TestCase):
-    def test_worker_forwards_event_timing(self):
-        from aiter import test_common
-        from aiter.utility import mp_tuner
-
-        with (
-            mock.patch.object(mp_tuner.torch, "device", return_value="cuda:0"),
-            mock.patch.object(mp_tuner.torch.cuda, "set_device"),
-            mock.patch.object(mp_tuner.torch.cuda, "synchronize"),
-            mock.patch.object(
-                test_common, "run_perftest", return_value=("result", 7.25)
-            ) as run_perftest,
-        ):
-            result = mp_tuner.worker(
-                0,
-                "candidate",
-                object(),
-                [],
-                {},
-                use_cuda_event=True,
-            )
-
-        self.assertEqual(result, ("candidate", 7.25, 0.0))
-        self.assertTrue(run_perftest.call_args.kwargs["use_cuda_event"])
-
-    def test_validation_can_be_disabled_without_reference(self):
-        from aiter.utility import mp_tuner
-
-        task = (
-            "candidate",
-            None,
-            (),
-            object(),
-            (),
-            {},
-            None,
-            (),
-            {},
-            None,
-        )
-        with (
-            mock.patch.object(mp_tuner.torch, "device", return_value="cuda:0"),
-            mock.patch.object(mp_tuner.torch.cuda, "set_device"),
-            mock.patch.object(
-                mp_tuner, "worker", return_value=("candidate", 1.0, 0.0)
-            ) as worker,
-        ):
-            result = mp_tuner.work_group(
-                {os.getpid(): 0},
-                fast_mode=0,
-                err_ratio=0.05,
-                in_data=(1, ()),
-                tasks=task,
-                use_cuda_event=True,
-                validate_results=False,
-            )
-
-        self.assertEqual(result, [("candidate", 1.0, 0.0)])
-        self.assertIsNone(worker.call_args.args[5])
-        self.assertTrue(worker.call_args.args[-2])
-        self.assertTrue(worker.call_args.args[-1])
 
 
 class TestFastScanCliSafety(unittest.TestCase):
@@ -197,6 +59,20 @@ class TestFastScanCliSafety(unittest.TestCase):
         self.assertEqual(args.fast_scan_final_iters, 31)
         self.assertEqual(args.fast_scan_finalists, 4)
 
+        for option in ("--fast-scan-iters", "--fast-scan-final-iters"):
+            with self.subTest(option=option), mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "gemm_moe_tune.py",
+                    "--mxfp4-flydsl",
+                    "--fast-scan",
+                    option,
+                    "1",
+                ],
+            ), self.assertRaises(SystemExit):
+                tuner.parse_args()
+
 
 class TestMxfp4AccuracyFunnel(unittest.TestCase):
     @staticmethod
@@ -221,6 +97,23 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
             [candidate["kernelName1"] for candidate in ranked],
             ["g1_accurate_tie", "g1_fastest", "g1_outside_tie"],
         )
+
+    def test_performance_finalists_keep_global_fastest_in_oversized_bucket(self):
+        from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
+
+        candidates = [self._candidate(f"candidate_{i}") for i in range(6)]
+        for index, candidate in enumerate(candidates):
+            candidate.update(us=100.0 + index * 0.2, err1=0.01 * (6 - index))
+
+        finalists = gemm_moe_tune._select_mxfp4_performance_finalists(
+            candidates, finalist_count=5
+        )
+
+        self.assertEqual(
+            [candidate["us"] for candidate in finalists],
+            [100.0, 100.2, 100.4, 100.6, 100.8],
+        )
+        self.assertIs(finalists[0], candidates[0])
 
     def test_final_global_gate_prefers_accuracy_without_chaining(self):
         from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
@@ -385,6 +278,72 @@ class TestMxfp4AccuracyFunnel(unittest.TestCase):
             [call[1]["num_iters"] for call in calls], [10, 10, 100, 100]
         )
         precompile.assert_called_once()
+
+    def test_finalist_failures_backfill_from_coarse_survivors(self):
+        from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune
+
+        tuner = gemm_moe_tune.Mxfp4FlydslTuner.__new__(
+            gemm_moe_tune.Mxfp4FlydslTuner
+        )
+        candidates = [self._candidate(f"candidate_{i}") for i in range(1, 5)]
+        args = SimpleNamespace(
+            fast_scan=True,
+            fast_scan_warmup_accuracy_checks=1,
+            fast_scan_iters=10,
+            fast_scan_final_iters=100,
+            fast_scan_finalists=2,
+            timeout=0,
+            errRatio=0.1,
+            warmup=2,
+            iters=101,
+        )
+        row = {
+            "token": 1,
+            "model_dim": 256,
+            "inter_dim": 256,
+            "expert": 8,
+            "topk": 2,
+            "act_type": "ActivationType.Silu",
+        }
+        calls = []
+
+        def run_candidate(_row, candidate, _args, **kwargs):
+            name = candidate["kernelName1"]
+            calls.append((name, kwargs["num_iters"]))
+            if kwargs["num_iters"] == 10:
+                order = {
+                    "g1_candidate_1": (1.0, 0.01),
+                    "g1_candidate_2": (2.0, 0.02),
+                    "g1_candidate_3": (3.0, 0.001),
+                    "g1_candidate_4": (4.0, 0.002),
+                }
+                candidate["us"], candidate["err1"] = order[name]
+                return candidate["us"]
+            if name in {"g1_candidate_1", "g1_candidate_2", "g1_candidate_3"}:
+                raise gemm_moe_tune.Mxfp4AccuracyError("final validation failed")
+            candidate["us"] = 4.0
+            return candidate["us"]
+
+        with (
+            mock.patch.object(tuner, "_candidate_rows", return_value=candidates),
+            mock.patch.object(tuner, "_precompile_candidates", return_value=(4, 0)),
+            mock.patch.object(tuner, "_prepare_case", return_value="fixture"),
+            mock.patch.object(tuner, "_torch_ref", return_value="reference"),
+            mock.patch.object(tuner, "_run_candidate", side_effect=run_candidate),
+            mock.patch("builtins.print"),
+        ):
+            best = tuner._tune_one_shape(row, args)
+
+        self.assertEqual(best["kernelName1"], "g1_candidate_4")
+        self.assertEqual(
+            [name for name, iters in calls if iters == 100],
+            [
+                "g1_candidate_1",
+                "g1_candidate_2",
+                "g1_candidate_3",
+                "g1_candidate_4",
+            ],
+        )
 
     def test_warmup_outputs_are_accuracy_checks_outside_timing(self):
         from csrc.ck_gemm_moe_2stages_codegen import gemm_moe_tune

@@ -164,6 +164,22 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(get_worker_count(), 99)
             automatic_budgets.assert_not_called()
 
+    def test_legacy_worker_cap_alias_is_honored(self):
+        with patch.dict(
+            os.environ, {"AITER_FLYDSL_AOT_WORKERS": "4"}, clear=True
+        ):
+            self.assertEqual(get_worker_count(), 4)
+            self.assertEqual(os.environ["AITER_MAX_JOBS"], "4")
+
+    def test_legacy_memory_override_is_honored(self):
+        with patch.dict(
+            os.environ, {"AITER_FLYDSL_AOT_MEM_PER_WORKER_GB": "4"}, clear=True
+        ), patch.object(
+            worker_limits, "_available_memory_bytes", return_value=8 * 1024**3
+        ), patch.object(worker_limits, "_process_cpu_count", return_value=64):
+            self.assertEqual(get_automatic_worker_budgets(), (51, 2))
+            self.assertEqual(get_worker_count(), 2)
+
     def test_framework_max_jobs_is_ignored(self):
         with patch.dict(os.environ, {"MAX_JOBS": "99"}, clear=True), patch.object(
             worker_limits, "_available_memory_bytes", return_value=10 * 1024**3
@@ -215,6 +231,14 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(os.environ["CMAKE_BUILD_PARALLEL_LEVEL"], "1")
             self.assertEqual(os.environ["MAKEFLAGS"], "-j1")
             self.assertEqual(os.environ["NINJAFLAGS"], "-j1")
+
+    def test_worker_descendants_override_legacy_worker_cap(self):
+        with patch.dict(
+            os.environ, {"AITER_FLYDSL_AOT_WORKERS": "16"}, clear=True
+        ):
+            configure_worker_subprocesses()
+            self.assertEqual(os.environ["AITER_MAX_JOBS"], "1")
+            self.assertEqual(os.environ["AITER_FLYDSL_AOT_WORKERS"], "1")
 
     def test_nested_worker_share_never_returns_zero(self):
         with patch.dict(os.environ, {"AITER_MAX_JOBS": "1"}, clear=True):

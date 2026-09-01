@@ -63,8 +63,9 @@ python -m aiter.aot.flydsl.chunk_gdn_h --csv /path/to/tuned.csv
 | --- | --- | --- |
 | `AITER_AOT_IMPORT` | Set to `1` so `import aiter` only loads the lightweight JIT core and skips the full top-level op namespace — faster and avoids heavy import side effects during AOT compilation (this is what `setup.py` sets while pre-compiling). | `0` |
 | `FLYDSL_RUNTIME_CACHE_DIR` | Cache directory | `~/.flydsl/cache` |
-| `AITER_FLYDSL_AOT_WORKERS` | Max concurrent worker processes. Set explicitly to honor it verbatim (bypasses the memory cap below); `0`/negative clamps to 1. Each worker uses ~1.5–2.5 GB RSS. | `min(affinity-aware CPUs, 64)`, then capped by available memory |
-| `AITER_FLYDSL_AOT_MEM_PER_WORKER_GB` | Assumed GiB/worker for the **auto memory cap** that keeps the OOM-killer from firing. Only applies when `AITER_FLYDSL_AOT_WORKERS` is **not** set; `0` disables the cap. | `2.0` |
+| `AITER_MAX_JOBS` | Canonical max concurrent worker processes. Set explicitly to honor it verbatim (bypasses automatic CPU/memory caps); `0`/negative clamps to 1. | unset: `min(80% of process-available CPUs, available-memory budget)` |
+| `AITER_FLYDSL_AOT_WORKERS` | Compatibility alias for `AITER_MAX_JOBS`; retained for existing FlyDSL commands and examples. | same as `AITER_MAX_JOBS` |
+| `AITER_FLYDSL_AOT_MEM_PER_WORKER_GB` | Assumed GiB/worker for the **auto memory cap**. It overrides the observed 1.5 GB/worker estimate; `0` disables only the memory cap. | observed 1.5 GB |
 | `AITER_FLYDSL_AOT_TIMEOUT` | Per-kernel wall-clock cap (seconds). A worker stuck *alive* past this is killed (and retried); `0` disables. | `1200` |
 | `AITER_FLYDSL_AOT_MAX_RETRIES` | Retries for a worker that **died abnormally** (OOM-kill / segfault / timeout-kill). A clean compile error is never retried. `0` disables. | `2` |
 | `AITER_CONFIGS` | Resolves the default CSV lookup path (same as the runtime JIT) | repo built-in |
@@ -80,6 +81,8 @@ python -m aiter.aot.flydsl.chunk_gdn_h --csv /path/to/tuned.csv
 Example:
 
 ```bash
+AITER_MAX_JOBS=16 python -m aiter.aot.flydsl.moe
+# The legacy spelling remains supported:
 AITER_FLYDSL_AOT_WORKERS=16 python -m aiter.aot.flydsl.moe
 ```
 
@@ -134,9 +137,10 @@ python op_tests/test_moe_2stage.py
   nanobind==2.12.0` if CMake reports it missing) so the on-`PYTHONPATH` build dir
   is refreshed to the right version.
 - **Worker OOM / killed (exitcode -9)**: abnormal exits are auto-retried
-  (`AITER_FLYDSL_AOT_MAX_RETRIES`) and the default worker count is already
-  memory-capped (`AITER_FLYDSL_AOT_MEM_PER_WORKER_GB`). If it still happens,
-  lower `AITER_FLYDSL_AOT_WORKERS` or raise the assumed GiB/worker.
+  (`AITER_FLYDSL_AOT_MAX_RETRIES`) and the automatic worker count is bounded by
+  available memory using the observed 1.5 GB/worker estimate. If it still
+  happens, lower `AITER_MAX_JOBS` (or its legacy alias) or raise the assumed
+  GiB/worker with `AITER_FLYDSL_AOT_MEM_PER_WORKER_GB`.
 - **A kernel hangs / never finishes**: it is killed once it exceeds
   `AITER_FLYDSL_AOT_TIMEOUT` (default 1200 s) and then retried. Lower the timeout
   to fail faster, or raise it for genuinely slow kernels.
