@@ -1,4 +1,5 @@
 import importlib.util
+import inspect
 import os
 import pathlib
 import unittest
@@ -14,6 +15,9 @@ configure_worker_subprocesses = _MODULE.configure_worker_subprocesses
 
 
 class WorkerAwarenessTest(unittest.TestCase):
+    def test_worker_count_accepts_no_per_caller_default(self):
+        self.assertEqual(tuple(inspect.signature(get_worker_count).parameters), ())
+
     def test_legacy_formula_reproduces_four_worker_case(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(os, "cpu_count", return_value=4):
             legacy_count = int(os.environ.get("MAX_JOBS", os.cpu_count() or 16))

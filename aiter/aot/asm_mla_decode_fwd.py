@@ -43,7 +43,7 @@ def main():
         )
 
     with concurrent.futures.ProcessPoolExecutor(
-        max_workers=get_worker_count(default=16),
+        max_workers=get_worker_count(),
         initializer=configure_worker_subprocesses,
     ) as executor:
         # Consume the iterator so worker compilation errors reach the caller.

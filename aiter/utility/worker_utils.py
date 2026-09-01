@@ -61,7 +61,7 @@ def configure_worker_subprocesses() -> None:
         os.environ[name] = value
 
 
-def get_worker_count(default: int | None = None) -> int:
+def get_worker_count() -> int:
     """Return and export a memory-, CPU-, and task-bounded worker count."""
     raw = os.environ.get("MAX_JOBS")
     if raw is not None:
