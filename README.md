@@ -138,9 +138,9 @@ AITER_USE_SYSTEM_TRITON=1 python3 -m pip install -e .
 
 ### Build parallelism
 
-`AITER_MAX_JOBS` is AITER's only top-level compilation-worker override. A generic `MAX_JOBS` inherited from vLLM, SGLang, PyTorch, or another parent framework is ignored and left unchanged. When `AITER_MAX_JOBS` is unset, AITER selects the smaller of 80% of the CPUs available to the current process and effective available memory divided by the observed 1.5 GB RSS estimate per worker. Effective available memory is the smaller of host `MemAvailable` and remaining cgroup v2/v1 memory when a finite container limit is present.
+`AITER_MAX_JOBS` is AITER's optional top-level compilation-worker ceiling. A generic `MAX_JOBS` inherited from vLLM, SGLang, PyTorch, or another parent framework is ignored and left unchanged. On every worker-policy call, AITER selects the smaller of 80% of the CPUs available to the current process and effective available memory divided by the observed 1.5 GB RSS estimate per worker. Effective available memory is the smaller of host `MemAvailable` and remaining cgroup v2/v1 memory when a finite container limit is present.
 
-An explicit `AITER_MAX_JOBS` is an unsafe expert override. It is honored verbatim except that non-positive values become one, bypasses automatic CPU and memory safety caps, and can oversubscribe CPUs or cause an OOM.
+When `AITER_MAX_JOBS` is set, its normalized value is applied as an additional upper bound; it never bypasses the live CPU or memory caps. Invalid values fall back to automatic sizing, and non-positive values impose a one-worker ceiling. Automatic results are not written back into the environment.
 
 Process-pool workers force nested AITER, Ninja, CMake, Make, OpenMP, BLAS, and NumExpr compilation fanout to one.
 

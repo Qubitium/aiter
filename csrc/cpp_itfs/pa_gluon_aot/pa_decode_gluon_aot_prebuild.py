@@ -644,7 +644,7 @@ def run_multi_pa_gluon_test(
     """Run all tests using bounded multiprocessing parallelism.
 
     The process pool is controlled exclusively by the shared AITER worker
-    policy. Set ``AITER_MAX_JOBS`` for an explicit CLI/CI override.
+    policy. Set ``AITER_MAX_JOBS`` for an explicit CLI/CI ceiling.
     """
     if sliding_window_options is None:
         sliding_window_options = [0]

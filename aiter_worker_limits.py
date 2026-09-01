@@ -192,25 +192,22 @@ def get_automatic_worker_budgets() -> tuple[int, int]:
 
 
 def get_worker_count() -> int:
-    """Return and export the single AITER CPU worker budget.
+    """Return the current AITER CPU worker budget.
 
-    An explicit ``AITER_MAX_JOBS`` is an unsafe expert override: it is honored
-    after normalization to the one-worker floor and bypasses automatic CPU and
-    memory caps. Automatic sizing takes the minimum of the CPU and effective
-    available-memory budgets.
+    CPU and effective available-memory budgets are recomputed on every call.
+    ``AITER_MAX_JOBS`` is an optional upper bound, never a replacement for the
+    live resource checks. Invalid values fall back to automatic sizing, and
+    non-positive values normalize to the one-worker floor.
     """
+    automatic_workers = max(1, min(get_automatic_worker_budgets()))
     raw = os.environ.get(_WORKER_ENV)
-    if raw is not None:
-        try:
-            workers = max(1, int(raw))
-        except ValueError as exc:
-            raise ValueError(f"{_WORKER_ENV} must be an integer, got {raw!r}") from exc
-        os.environ[_WORKER_ENV] = str(workers)
-        return workers
-
-    workers = max(1, min(get_automatic_worker_budgets()))
-    os.environ[_WORKER_ENV] = str(workers)
-    return workers
+    if raw is None:
+        return automatic_workers
+    try:
+        configured_limit = max(1, int(raw))
+    except ValueError:
+        return automatic_workers
+    return min(automatic_workers, configured_limit)
 
 
 def get_worker_count_for(work_count: int) -> int:

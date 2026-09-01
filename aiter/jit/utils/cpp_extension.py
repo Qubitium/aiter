@@ -476,11 +476,10 @@ class BuildExtension(build_ext):
     Fallbacks to the standard distutils backend if Ninja is not available.
 
     .. note::
-        By default, the Ninja backend uses #CPUS + 2 workers to build the
-        extension. This may use up too many resources on some systems. One
-        can control the number of workers by setting the `AITER_MAX_JOBS`
-        environment variable to an integer. Non-positive values are normalized
-        to one worker.
+        The Ninja backend uses AITER's live CPU and memory worker budget. One
+        can impose an additional ceiling by setting the `AITER_MAX_JOBS`
+        environment variable to an integer. The live limits are recalculated
+        for every build. Non-positive values impose one worker.
     """
 
     @classmethod
@@ -1546,7 +1545,7 @@ def _get_num_workers(verbose: bool, ninja_workers: int | None = None) -> int:
     max_jobs = get_worker_count()
     if verbose:
         print(
-            f"Using AITER_MAX_JOBS ({max_jobs}) as the number of workers...",
+            f"Using AITER worker budget ({max_jobs}) as the number of workers...",
             file=sys.stderr,
         )
     return max_jobs

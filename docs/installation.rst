@@ -82,9 +82,9 @@ Environment Variables
      - ``0`` = JIT only, ``1`` = core kernels, ``2`` = inference kernels, ``3`` = MHA only
      - ``0``
    * - ``AITER_MAX_JOBS``
-     - AITER-local parallel compilation workers. Generic ``MAX_JOBS`` from a
-       parent framework is ignored. An explicit value bypasses automatic CPU
-       and memory caps and may oversubscribe or OOM.
+     - Optional AITER-local parallel compilation ceiling. Generic ``MAX_JOBS``
+       from a parent framework is ignored. Live CPU and memory limits are
+       recalculated on every policy call and always clamp this value.
      - Minimum of 80% of process-available CPUs and effective host/container
        available-memory capacity
 

@@ -195,14 +195,25 @@ class WorkerAwarenessTest(unittest.TestCase):
             worker_limits, "_available_memory_bytes", return_value=10 * 1024**3
         ), patch.object(worker_limits, "_process_cpu_count", return_value=4):
             self.assertEqual(get_worker_count(), 3)
-            self.assertEqual(os.environ["AITER_MAX_JOBS"], "3")
+            self.assertNotIn("AITER_MAX_JOBS", os.environ)
 
-    def test_explicit_aiter_max_jobs_bypasses_automatic_caps(self):
+    def test_explicit_aiter_max_jobs_is_clamped_to_automatic_caps(self):
         with patch.dict(os.environ, {"AITER_MAX_JOBS": "99"}, clear=True), patch.object(
-            worker_limits, "get_automatic_worker_budgets"
+            worker_limits, "get_automatic_worker_budgets", return_value=(4, 3)
         ) as automatic_budgets:
-            self.assertEqual(get_worker_count(), 99)
-            automatic_budgets.assert_not_called()
+            self.assertEqual(get_worker_count(), 3)
+            automatic_budgets.assert_called_once_with()
+
+    def test_automatic_worker_budget_is_recomputed_on_every_call(self):
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            worker_limits,
+            "get_automatic_worker_budgets",
+            side_effect=((102, 180), (1, 1)),
+        ) as automatic_budgets:
+            self.assertEqual(get_worker_count(), 102)
+            self.assertEqual(get_worker_count(), 1)
+            self.assertEqual(automatic_budgets.call_count, 2)
+            self.assertNotIn("AITER_MAX_JOBS", os.environ)
 
     def test_framework_max_jobs_is_ignored(self):
         with patch.dict(os.environ, {"MAX_JOBS": "99"}, clear=True), patch.object(
@@ -210,26 +221,36 @@ class WorkerAwarenessTest(unittest.TestCase):
         ), patch.object(worker_limits, "_process_cpu_count", return_value=4):
             self.assertEqual(get_worker_count(), 3)
             self.assertEqual(os.environ["MAX_JOBS"], "99")
-            self.assertEqual(os.environ["AITER_MAX_JOBS"], "3")
+            self.assertNotIn("AITER_MAX_JOBS", os.environ)
 
     def test_explicit_lower_aiter_max_jobs_is_honored(self):
         with patch.dict(os.environ, {"AITER_MAX_JOBS": "1"}, clear=True):
             self.assertEqual(get_worker_count(), 1)
 
-    def test_nonpositive_aiter_max_jobs_is_clamped_and_exported(self):
+    def test_nonpositive_aiter_max_jobs_is_clamped_without_mutating_environment(self):
         for raw_value in ("0", "-7"):
             with self.subTest(raw_value=raw_value), patch.dict(
                 os.environ, {"AITER_MAX_JOBS": raw_value}, clear=True
             ):
                 self.assertEqual(get_worker_count(), 1)
-                self.assertEqual(os.environ["AITER_MAX_JOBS"], "1")
+                self.assertEqual(os.environ["AITER_MAX_JOBS"], raw_value)
+
+    def test_invalid_aiter_max_jobs_falls_back_to_automatic_sizing(self):
+        for raw_value in ("", "auto", "not-an-integer"):
+            with self.subTest(raw_value=raw_value), patch.dict(
+                os.environ, {"AITER_MAX_JOBS": raw_value}, clear=True
+            ), patch.object(
+                worker_limits, "get_automatic_worker_budgets", return_value=(6, 4)
+            ):
+                self.assertEqual(get_worker_count(), 4)
+                self.assertEqual(os.environ["AITER_MAX_JOBS"], raw_value)
 
     def test_zero_memory_capacity_still_returns_one_worker(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
             worker_limits, "_available_memory_bytes", return_value=0
         ), patch.object(worker_limits, "_process_cpu_count", return_value=1):
             self.assertEqual(get_worker_count(), 1)
-            self.assertEqual(os.environ["AITER_MAX_JOBS"], "1")
+            self.assertNotIn("AITER_MAX_JOBS", os.environ)
 
     def test_available_memory_caps_default_workers(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
@@ -238,7 +259,7 @@ class WorkerAwarenessTest(unittest.TestCase):
             return_value=4 * worker_limits.EST_WORKER_RSS_BYTES,
         ), patch.object(worker_limits, "_process_cpu_count", return_value=64):
             self.assertEqual(get_worker_count(), 4)
-            self.assertEqual(os.environ["AITER_MAX_JOBS"], "4")
+            self.assertNotIn("AITER_MAX_JOBS", os.environ)
 
     def test_worker_descendants_are_forced_to_one_job(self):
         with patch.dict(
@@ -257,7 +278,9 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(os.environ["NINJAFLAGS"], "-j1")
 
     def test_work_capped_worker_count_never_returns_zero(self):
-        with patch.dict(os.environ, {"AITER_MAX_JOBS": "19"}, clear=True):
+        with patch.dict(os.environ, {"AITER_MAX_JOBS": "19"}, clear=True), patch.object(
+            worker_limits, "get_automatic_worker_budgets", return_value=(32, 32)
+        ):
             self.assertEqual(get_worker_count_for(0), 1)
             self.assertEqual(get_worker_count_for(3), 3)
 
