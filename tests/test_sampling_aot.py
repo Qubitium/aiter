@@ -1,7 +1,13 @@
 """Regression tests for the sampling-kernel AOT compile driver."""
 
+import pathlib
+import sys
 import unittest
 from unittest.mock import Mock, patch
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from aiter.aot import sampling as driver
 

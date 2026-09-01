@@ -19,7 +19,6 @@ concurrency:
 
 env:
   GPU_ARCH_LIST: "gfx942;gfx950"
-  AITER_TEST: "op_tests"
   AITER_WHEEL_ARTIFACT_NAME: aiter-whl-${{ github.run_id }}
 
 jobs:

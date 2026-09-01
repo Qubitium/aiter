@@ -6,8 +6,14 @@ unit-test coverage, allowing the mismatched arguments to remain unnoticed.
 """
 
 import inspect
+import pathlib
+import sys
 import unittest
 from unittest.mock import Mock, patch
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from aiter.aot import asm_mla_decode_fwd as driver
 from csrc.cpp_itfs.mla import asm_mla_decode_fwd as compile_module

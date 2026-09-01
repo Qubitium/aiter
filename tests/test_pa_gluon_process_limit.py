@@ -1,7 +1,13 @@
 """Focused tests for PA-Gluon's centralized worker policy."""
 
+import pathlib
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import torch
 

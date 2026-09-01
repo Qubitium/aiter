@@ -7,7 +7,9 @@ import sys
 import tempfile
 import unittest
 
-_REPO = pathlib.Path(__file__).parents[1]
+_REPO = pathlib.Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 
 class WorkerEntrypointTest(unittest.TestCase):
