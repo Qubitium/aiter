@@ -84,8 +84,7 @@ Environment Variables
    * - ``AITER_MAX_JOBS``
      - AITER-local parallel compilation workers. Generic ``MAX_JOBS`` from a
        parent framework is ignored.
-     - Minimum of 80% of process-available CPUs, available-memory capacity,
-       and cgroup PID capacity when exposed
+     - Minimum of 80% of process-available CPUs and available-memory capacity
 
 Example Configurations
 """"""""""""""""""""""

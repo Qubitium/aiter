@@ -858,7 +858,7 @@ path.
 **What did NOT help** on this hardware:
 
 - **AITER_MAX_JOBS tweaks**: aiter already auto-selects
-  `min(80% × process CPUs, free_mem / 1.5 GB, cgroup PID capacity)` = 102
+  `min(80% × process CPUs, free_mem / 1.5 GB)` = 102
   on the test host;
   CPU saturation isn't the bottleneck — the host TU's serial parse
   of `<torch/extension.h>` is.

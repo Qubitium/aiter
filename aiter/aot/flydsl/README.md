@@ -63,7 +63,7 @@ python -m aiter.aot.flydsl.chunk_gdn_h --csv /path/to/tuned.csv
 | --- | --- | --- |
 | `AITER_AOT_IMPORT` | Set to `1` so `import aiter` only loads the lightweight JIT core and skips the full top-level op namespace — faster and avoids heavy import side effects during AOT compilation (this is what `setup.py` sets while pre-compiling). | `0` |
 | `FLYDSL_RUNTIME_CACHE_DIR` | Cache directory | `~/.flydsl/cache` |
-| `AITER_MAX_JOBS` | AITER-local maximum concurrent CPU compilation workers. An explicit positive value is honored; `0` or a negative value is normalized to 1. When unset, the shared AITER policy selects the minimum of 80% of process-available CPU cores, available memory divided by the observed 1.5 GB worker RSS estimate, and cgroup PID capacity when exposed. | auto |
+| `AITER_MAX_JOBS` | AITER-local maximum concurrent CPU compilation workers. An explicit positive value is honored; `0` or a negative value is normalized to 1. When unset, the shared AITER policy selects the minimum of 80% of process-available CPU cores and available memory divided by the observed 1.5 GB worker RSS estimate. | auto |
 | `AITER_SUBPROCESS_MAX_JOBS` | Nested compiler jobs allowed inside each AOT worker. The worker initializer also constrains Ninja, CMake, Make, OpenMP, BLAS, and NumExpr descendants. | `1` |
 | `AITER_FLYDSL_AOT_TIMEOUT` | Per-kernel wall-clock cap (seconds). A worker stuck *alive* past this is killed (and retried); `0` disables. | `1200` |
 | `AITER_FLYDSL_AOT_MAX_RETRIES` | Retries for a worker that **died abnormally** (OOM-kill / segfault / timeout-kill). A clean compile error is never retried. `0` disables. | `2` |

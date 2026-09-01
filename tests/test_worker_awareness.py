@@ -40,8 +40,6 @@ class WorkerAwarenessTest(unittest.TestCase):
     def test_four_cpu_worker_count_uses_eighty_percent(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
             worker_limits, "_available_memory_bytes", return_value=10 * 1024**3
-        ), patch.object(
-            worker_limits, "_cgroup_worker_budget", return_value=None
         ), patch.object(worker_limits, "_process_cpu_count", return_value=4):
             self.assertEqual(get_worker_count(), 3)
             self.assertEqual(os.environ["AITER_MAX_JOBS"], "3")
@@ -53,8 +51,6 @@ class WorkerAwarenessTest(unittest.TestCase):
     def test_framework_max_jobs_is_ignored(self):
         with patch.dict(os.environ, {"MAX_JOBS": "99"}, clear=True), patch.object(
             worker_limits, "_available_memory_bytes", return_value=10 * 1024**3
-        ), patch.object(
-            worker_limits, "_cgroup_worker_budget", return_value=None
         ), patch.object(worker_limits, "_process_cpu_count", return_value=4):
             self.assertEqual(get_worker_count(), 3)
             self.assertEqual(os.environ["MAX_JOBS"], "99")
@@ -72,11 +68,9 @@ class WorkerAwarenessTest(unittest.TestCase):
                 self.assertEqual(get_worker_count(), 1)
                 self.assertEqual(os.environ["AITER_MAX_JOBS"], "1")
 
-    def test_zero_capacity_probes_still_return_one_worker(self):
+    def test_zero_memory_capacity_still_returns_one_worker(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
             worker_limits, "_available_memory_bytes", return_value=0
-        ), patch.object(
-            worker_limits, "_cgroup_worker_budget", return_value=0
         ), patch.object(worker_limits, "_process_cpu_count", return_value=1):
             self.assertEqual(get_worker_count(), 1)
             self.assertEqual(os.environ["AITER_MAX_JOBS"], "1")
@@ -86,33 +80,9 @@ class WorkerAwarenessTest(unittest.TestCase):
             worker_limits,
             "_available_memory_bytes",
             return_value=4 * worker_limits.EST_WORKER_RSS_BYTES,
-        ), patch.object(
-            worker_limits, "_cgroup_worker_budget", return_value=None
         ), patch.object(worker_limits, "_process_cpu_count", return_value=64):
             self.assertEqual(get_worker_count(), 4)
             self.assertEqual(os.environ["AITER_MAX_JOBS"], "4")
-
-    def test_cgroup_task_capacity_caps_default_workers(self):
-        with patch.dict(os.environ, {}, clear=True), patch.object(
-            worker_limits, "_available_memory_bytes", return_value=128 * 1024**3
-        ), patch.object(
-            worker_limits, "_cgroup_worker_budget", return_value=7
-        ), patch.object(worker_limits, "_process_cpu_count", return_value=64):
-            self.assertEqual(get_worker_count(), 7)
-            self.assertEqual(os.environ["AITER_MAX_JOBS"], "7")
-
-    def test_missing_cgroup_pid_files_disable_the_task_budget(self):
-        with patch.object(
-            worker_limits.os.path, "exists", side_effect=(True, False)
-        ), patch("builtins.open") as open_file:
-            self.assertIsNone(worker_limits._cgroup_worker_budget())
-            open_file.assert_not_called()
-
-    def test_unreadable_cgroup_pid_files_disable_the_task_budget(self):
-        with patch.object(
-            worker_limits.os.path, "exists", return_value=True
-        ), patch("builtins.open", side_effect=PermissionError):
-            self.assertIsNone(worker_limits._cgroup_worker_budget())
 
     def test_worker_descendants_default_to_one_job(self):
         with patch.dict(
