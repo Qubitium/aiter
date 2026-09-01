@@ -139,12 +139,16 @@ python3 csrc/ck_gemm_moe_2stages_codegen/gemm_moe_tune.py \
 
 Use `--fast-scan` with `--mxfp4-flydsl` to scan each legal coupled G1/G2
 candidate with accelerator events. The scan prepares one input fixture per
-shape, measures every candidate for `--fast-scan-iters` iterations (default 5),
-then retimes the fastest `--fast-scan-finalists` candidates (default 5) with the
-full `--iters` value.
+shape and builds one shared torch reference. Candidates that exceed
+`--errRatio`, return a non-finite error, or fail to launch are discarded before
+ranking. The remaining candidates are measured for `--fast-scan-iters`
+iterations (default 5), and the fastest `--fast-scan-finalists` candidates
+(default 5) are revalidated and retimed with the full `--iters` value. A shape
+with no accurate finalist is recorded as failed instead of emitting a profile.
 
-Fast scan intentionally defers correctness checks. Always validate the selected
-rows through the production operator before using or committing the table:
+The funnel checks kernel-level correctness at every stage. Still validate the
+selected rows through the production operator before using or committing the
+table, because that also covers runtime dispatch and integration:
 
 ```bash
 python3 csrc/ck_gemm_moe_2stages_codegen/gemm_moe_tune.py \

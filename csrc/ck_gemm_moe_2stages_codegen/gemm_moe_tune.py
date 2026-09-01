@@ -2,6 +2,7 @@
 # Copyright (C) 2024-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 import functools
+import math
 import os
 import re
 import sys
@@ -483,7 +484,8 @@ class FmoeTuner(TunerCommon):
             required=False,
             help="Scan every candidate with lightweight accelerator-event timing "
             "and defer correctness checks to --run_config. With --mxfp4-flydsl, "
-            "the fastest candidates are retimed at full --iters.",
+            "incorrect candidates are discarded in every funnel stage and only "
+            "the fastest valid candidates are retimed at full --iters.",
         )
         self.parser.add_argument(
             "--fast-scan-iters",
@@ -6309,7 +6311,14 @@ class Mxfp4FlydslTuner(FmoeTuner):
         )
 
     def _run_candidate(
-        self, row, candidate, args, data=None, num_warmup=None, num_iters=None
+        self,
+        row,
+        candidate,
+        args,
+        data=None,
+        reference=None,
+        num_warmup=None,
+        num_iters=None,
     ):
         from aiter.test_common import run_perftest
 
@@ -6324,13 +6333,31 @@ class Mxfp4FlydslTuner(FmoeTuner):
         )
         if data is None:
             data = self._prepare_case(token, h, e, ne, topk, dtype)
-        if args.fast_scan:
+        if reference is not None:
+            out = self._port_e2e(data, kn1, kn2, topk, ne, h, dtype)
+            err = cosine_diff_compare(
+                reference,
+                out,
+                msg=f"port[{kn1}+{kn2}]",
+                printLog=False,
+            )
+            if (
+                err is None
+                or not math.isfinite(float(err))
+                or float(err) > args.errRatio
+            ):
+                raise RuntimeError(f"cosine err_ratio {err} > {args.errRatio}")
+        elif args.fast_scan:
             err = 0.0
         else:
             out = self._port_e2e(data, kn1, kn2, topk, ne, h, dtype)
             ref = self._torch_ref(data, topk, dtype, activation)
             err = cosine_diff_compare(ref, out, msg=f"port[{kn1}+{kn2}]")
-            if err is None or float(err) > args.errRatio:
+            if (
+                err is None
+                or not math.isfinite(float(err))
+                or float(err) > args.errRatio
+            ):
                 raise RuntimeError(f"cosine err_ratio {err} > {args.errRatio}")
         _, us = run_perftest(
             lambda: self._port_e2e(data, kn1, kn2, topk, ne, h, dtype),
@@ -6378,9 +6405,8 @@ class Mxfp4FlydslTuner(FmoeTuner):
         # Candidate kernels for one shape consume the same immutable inputs and
         # shuffled weights. In scan mode, prepare that fixture once instead of
         # regenerating and reshuffling the full expert tensors for every pair.
-        # Winner validation uses a freshly prepared case in the separate normal
-        # (non-fast-scan) or --run_config path.
         scan_data = None
+        scan_reference = None
         if args.fast_scan:
             scan_data = self._prepare_case(
                 int(row["token"]),
@@ -6389,6 +6415,17 @@ class Mxfp4FlydslTuner(FmoeTuner):
                 int(row["expert"]),
                 int(row["topk"]),
                 dtypes.bf16,
+            )
+            activation = (
+                ActivationType.Swiglu
+                if str(row["act_type"]).endswith("Swiglu")
+                else ActivationType.Silu
+            )
+            # Build the expensive torch reference once per shape. Every coarse
+            # candidate and every finalist must pass against this same reference
+            # before its timing can advance to the next funnel stage.
+            scan_reference = self._torch_ref(
+                scan_data, int(row["topk"]), dtypes.bf16, activation
             )
         scan_iters = max(1, int(getattr(args, "fast_scan_iters", 5)))
         scan_warmup = 1
@@ -6401,6 +6438,7 @@ class Mxfp4FlydslTuner(FmoeTuner):
                     candidate,
                     args,
                     data=scan_data,
+                    reference=scan_reference,
                     num_warmup=scan_warmup if args.fast_scan else None,
                     num_iters=scan_iters if args.fast_scan else None,
                 )
@@ -6440,7 +6478,11 @@ class Mxfp4FlydslTuner(FmoeTuner):
                     signal.alarm(timeout)
                 try:
                     us = self._run_candidate(
-                        row, candidate, args, data=scan_data
+                        row,
+                        candidate,
+                        args,
+                        data=scan_data,
+                        reference=scan_reference,
                     )
                     print(
                         f"[mxfp4-port] finalist token={row['token']} "
