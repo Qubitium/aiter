@@ -36,7 +36,7 @@ def _host_available_memory_bytes() -> int:
         import psutil
 
         return max(0, int(psutil.virtual_memory().available))
-    except (ImportError, OSError, ValueError, KeyError):
+    except Exception:  # noqa: BLE001
         return EST_WORKER_RSS_BYTES
 
 
