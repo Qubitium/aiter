@@ -482,6 +482,7 @@ setup(
     name=PACKAGE_NAME,
     use_scm_version=True,
     packages=packages,
+    py_modules=["aiter_worker_limits"],
     include_package_data=True,
     package_data={
         "": ["*"],

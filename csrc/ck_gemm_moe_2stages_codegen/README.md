@@ -138,13 +138,25 @@ python3 csrc/ck_gemm_moe_2stages_codegen/gemm_moe_tune.py \
 #### Fast MXFP4 FlyDSL scan
 
 Use `--fast-scan` with `--mxfp4-flydsl` to scan each legal coupled G1/G2
-candidate with accelerator events. The scan prepares one input fixture per
-shape and builds one shared torch reference. Candidates that exceed
-`--errRatio`, return a non-finite error, or fail to launch are discarded before
-ranking. The remaining candidates are measured for `--fast-scan-iters`
-iterations (default 5), and the fastest `--fast-scan-finalists` candidates
-(default 5) are revalidated and retimed with the full `--iters` value. A shape
-with no accurate finalist is recorded as failed instead of emitting a profile.
+candidate using the profiler-summed active GPU-kernel time, excluding launch
+overhead and idle gaps. The scan prepares one input fixture per shape and
+builds one shared torch reference. Candidates that exceed
+`--errRatio`, return a non-finite error, or fail to launch stop the current
+shape before more candidates are generated. A shared
+`--fast-scan-warmup-accuracy-checks` control (default 2) runs untimed launches
+and validates each output in both funnel stages. The remaining candidates are
+profiled for `--fast-scan-iters` launches (default 8), and the fastest
+`--fast-scan-finalists` candidates (default 5) are revalidated and retimed for
+`--fast-scan-final-iters` profiled launches (default 48). The profiler discards
+its first sample before averaging active kernel durations. The final measured
+output is checked after timing as an additional stability guard. During coarse
+finalist selection, candidates whose normalized
+latency difference from the fastest member of a timing bucket is less than
+0.01 (1%) are treated as tied. Final-winner selection does not chain buckets:
+it finds the globally fastest finalist, includes every finalist within 1% of
+that latency, and selects the lowest worst-case cosine error in that global
+performance-equivalent set. Latency breaks an exact accuracy tie. A failed
+accuracy gate records the shape as failed instead of emitting a profile.
 
 The funnel checks kernel-level correctness at every stage. Still validate the
 selected rows through the production operator before using or committing the

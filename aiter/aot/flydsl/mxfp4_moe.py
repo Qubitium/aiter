@@ -14,9 +14,11 @@ Standalone:
 import argparse
 import csv
 import glob
+import io
 import os
 import sys
 import time
+from contextlib import nullcontext
 
 from aiter.aot.flydsl.common import collect_aot_jobs, compile_only_env, override_env
 from aiter.jit.core import AITER_CONFIGS, AITER_ROOT_DIR
@@ -88,8 +90,8 @@ def _job_key(job: dict) -> tuple:
     )
 
 
-def parse_csv(csv_path: str):
-    """Parse an fp4 tuned CSV into unique mxmoe-port compile jobs (one per stage)."""
+def parse_csv(csv_path):
+    """Parse fp4 rows into unique mxmoe-port compile jobs (one per stage)."""
     from aiter.ops.flydsl.mxfp4_gemm2_kernels import _epilog_of
     from aiter.ops.flydsl.mxfp4_kname import (
         _is_mxfp4_kname,
@@ -108,7 +110,12 @@ def parse_csv(csv_path: str):
         seen.add(key)
         jobs.append(job)
 
-    with open(csv_path, newline="") as f:
+    source = (
+        nullcontext(csv_path)
+        if hasattr(csv_path, "read")
+        else open(csv_path, newline="")
+    )
+    with source as f:
         for row in csv.DictReader(f):
             topk = int(row["topk"])
             # Shape comes from CSV columns; v2 GEMM2 aligns K to its encoded BK.
@@ -158,7 +165,12 @@ def parse_csv(csv_path: str):
                     and row.get("dtype", "") in ("torch.bfloat16", "torch.float16")
                     and "float4_e2m1fn_x2" in row.get("q_dtype_w", "")
                 )
-                enable_bias_options = [False, True] if bias_supported else [False]
+                include_bias_variants = row.get("_include_bias_variants", "1") != "0"
+                enable_bias_options = (
+                    [False, True]
+                    if bias_supported and include_bias_variants
+                    else [False]
+                )
                 for enable_bias in enable_bias_options:
                     _add(
                         {
@@ -223,6 +235,23 @@ def parse_csv(csv_path: str):
                     )
 
     return jobs
+
+
+def jobs_from_rows(rows, *, include_bias_variants=True):
+    """Build deduplicated AOT jobs from in-memory tuner candidate rows."""
+    rows = [
+        dict(row, _include_bias_variants="1" if include_bias_variants else "0")
+        for row in rows
+    ]
+    if not rows:
+        return []
+    stream = io.StringIO()
+    fieldnames = sorted({key for row in rows for key in row})
+    writer = csv.DictWriter(stream, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    stream.seek(0)
+    return parse_csv(stream)
 
 
 def _dummy(nbytes=256):
@@ -406,6 +435,17 @@ def compile_one_config(**job):
         print(f"  [FAIL] compile  stage{stage}  {shape_str}: {e}")
 
     return result
+
+
+def compile_job_batch(jobs):
+    """Compile a batch in one worker process to amortize AITER import cost."""
+    started = time.monotonic()
+    results = [compile_one_config(**job) for job in jobs]
+    return {
+        "kernel_name": f"mxfp4 batch ({len(jobs)} jobs)",
+        "compile_time": time.monotonic() - started,
+        "results": results,
+    }
 
 
 def main():
