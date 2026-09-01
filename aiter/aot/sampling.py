@@ -1,8 +1,7 @@
 import concurrent.futures
-import os
-from aiter.utility.worker_utils import configure_worker_subprocesses, get_worker_count
 from collections import namedtuple
 
+from aiter_worker_limits import configure_worker_subprocesses, get_worker_count
 from csrc.cpp_itfs.sampling.top_k_renorm_probs import (
     compile as top_k_renorm_probs_compile,
 )
@@ -84,9 +83,14 @@ def main():
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=max_jobs, initializer=configure_worker_subprocesses
     ) as executor:
-        executor.map(process_top_k_renorm_config, top_k_renorm_configs)
-        executor.map(process_top_p_sampling_config, top_p_sampling_configs)
-        executor.map(process_top_k_top_p_sampling_config, top_k_top_p_sampling_configs)
+        list(executor.map(process_top_k_renorm_config, top_k_renorm_configs))
+        list(executor.map(process_top_p_sampling_config, top_p_sampling_configs))
+        list(
+            executor.map(
+                process_top_k_top_p_sampling_config,
+                top_k_top_p_sampling_configs,
+            )
+        )
 
 
 if __name__ == "__main__":

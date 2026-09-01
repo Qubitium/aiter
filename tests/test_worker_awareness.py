@@ -1,27 +1,20 @@
-import importlib.util
 import inspect
 import os
-import pathlib
 import unittest
 from unittest.mock import patch
 
-_HELPER = pathlib.Path(__file__).parents[1] / "aiter/utility/worker_utils.py"
-_SPEC = importlib.util.spec_from_file_location("aiter_worker_utils", _HELPER)
-_MODULE = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_MODULE)
-get_worker_count = _MODULE.get_worker_count
-get_cpu_worker_budget = _MODULE.get_cpu_worker_budget
-configure_worker_subprocesses = _MODULE.configure_worker_subprocesses
+import aiter_worker_limits as worker_limits
+
+configure_worker_subprocesses = worker_limits.configure_worker_subprocesses
+get_cpu_worker_budget = worker_limits.get_cpu_worker_budget
+get_worker_count = worker_limits.get_worker_count
+get_worker_count_for = worker_limits.get_worker_count_for
+get_worker_count_per_parent = worker_limits.get_worker_count_per_parent
 
 
 class WorkerAwarenessTest(unittest.TestCase):
     def test_worker_count_accepts_no_per_caller_default(self):
         self.assertEqual(tuple(inspect.signature(get_worker_count).parameters), ())
-
-    def test_legacy_formula_reproduces_four_worker_case(self):
-        with patch.dict(os.environ, {}, clear=True), patch.object(os, "cpu_count", return_value=4):
-            legacy_count = int(os.environ.get("MAX_JOBS", os.cpu_count() or 16))
-            self.assertEqual(legacy_count, 4)
 
     def test_cpu_budget_uses_at_most_eighty_percent(self):
         with patch.object(os, "cpu_count", return_value=24):
@@ -39,10 +32,10 @@ class WorkerAwarenessTest(unittest.TestCase):
 
     def test_four_cpu_worker_count_uses_eighty_percent(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
-            _MODULE, "_available_memory_bytes", return_value=10 * 1024**3
-        ), patch.object(_MODULE, "_cgroup_worker_budget", return_value=None), patch.object(
-            os, "cpu_count", return_value=4
-        ):
+            worker_limits, "_available_memory_bytes", return_value=10 * 1024**3
+        ), patch.object(
+            worker_limits, "_cgroup_worker_budget", return_value=None
+        ), patch.object(os, "cpu_count", return_value=4):
             self.assertEqual(get_worker_count(), 3)
             self.assertEqual(os.environ["MAX_JOBS"], "3")
 
@@ -68,30 +61,30 @@ class WorkerAwarenessTest(unittest.TestCase):
 
     def test_zero_capacity_probes_still_return_one_worker(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
-            _MODULE, "_available_memory_bytes", return_value=0
-        ), patch.object(_MODULE, "_cgroup_worker_budget", return_value=0), patch.object(
-            os, "cpu_count", return_value=None
-        ):
+            worker_limits, "_available_memory_bytes", return_value=0
+        ), patch.object(
+            worker_limits, "_cgroup_worker_budget", return_value=0
+        ), patch.object(os, "cpu_count", return_value=None):
             self.assertEqual(get_worker_count(), 1)
             self.assertEqual(os.environ["MAX_JOBS"], "1")
 
     def test_available_memory_caps_default_workers(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
-            _MODULE,
+            worker_limits,
             "_available_memory_bytes",
-            return_value=4 * _MODULE._MEMORY_PER_WORKER_BYTES,
-        ), patch.object(_MODULE, "_cgroup_worker_budget", return_value=None), patch.object(
-            os, "cpu_count", return_value=64
-        ):
+            return_value=4 * worker_limits.EST_WORKER_RSS_BYTES,
+        ), patch.object(
+            worker_limits, "_cgroup_worker_budget", return_value=None
+        ), patch.object(os, "cpu_count", return_value=64):
             self.assertEqual(get_worker_count(), 4)
             self.assertEqual(os.environ["MAX_JOBS"], "4")
 
     def test_cgroup_task_capacity_caps_default_workers(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
-            _MODULE, "_available_memory_bytes", return_value=128 * 1024**3
-        ), patch.object(_MODULE, "_cgroup_worker_budget", return_value=7), patch.object(
-            os, "cpu_count", return_value=64
-        ):
+            worker_limits, "_available_memory_bytes", return_value=128 * 1024**3
+        ), patch.object(
+            worker_limits, "_cgroup_worker_budget", return_value=7
+        ), patch.object(os, "cpu_count", return_value=64):
             self.assertEqual(get_worker_count(), 7)
             self.assertEqual(os.environ["MAX_JOBS"], "7")
 
@@ -102,6 +95,20 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(os.environ["CMAKE_BUILD_PARALLEL_LEVEL"], "1")
             self.assertEqual(os.environ["MAKEFLAGS"], "-j1")
             self.assertEqual(os.environ["NINJAFLAGS"], "-j1")
+
+    def test_nested_worker_share_never_returns_zero(self):
+        with patch.dict(os.environ, {"MAX_JOBS": "1"}, clear=True):
+            self.assertEqual(get_worker_count_per_parent(5), 1)
+            self.assertEqual(get_worker_count_per_parent(0), 1)
+
+    def test_nested_worker_share_divides_the_global_budget(self):
+        with patch.dict(os.environ, {"MAX_JOBS": "19"}, clear=True):
+            self.assertEqual(get_worker_count_per_parent(5), 3)
+
+    def test_work_capped_worker_count_never_returns_zero(self):
+        with patch.dict(os.environ, {"MAX_JOBS": "19"}, clear=True):
+            self.assertEqual(get_worker_count_for(0), 1)
+            self.assertEqual(get_worker_count_for(3), 3)
 
     def test_zero_subprocess_jobs_is_clamped_to_one(self):
         with patch.dict(

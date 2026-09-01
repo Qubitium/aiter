@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from multiprocessing.connection import wait as wait_for_sentinels
 from typing import Any
 
-from aiter.utility.worker_utils import configure_worker_subprocesses, get_worker_count
+from aiter_worker_limits import configure_worker_subprocesses, get_worker_count_for
 
 _DEFAULT_KERNEL_TIMEOUT = 1200.0
 _DEFAULT_MAX_RETRIES = 2
@@ -207,7 +207,7 @@ def get_max_retries() -> int:
 
 
 def get_max_workers(num_jobs: int) -> int:
-    return min(get_worker_count(), num_jobs)
+    return get_worker_count_for(num_jobs)
 
 
 def _run_file_pool(

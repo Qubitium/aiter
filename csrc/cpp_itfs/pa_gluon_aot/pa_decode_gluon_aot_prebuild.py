@@ -7,7 +7,6 @@ import multiprocessing
 import random
 import subprocess
 import sys
-from multiprocessing import cpu_count
 
 import pandas as pd
 import torch
@@ -17,6 +16,7 @@ import triton.language as tl
 import aiter
 from aiter import dtypes
 from aiter.test_common import benchmark
+from aiter_worker_limits import configure_worker_subprocesses, get_worker_count_for
 from csrc.cpp_itfs.pa_gluon_aot.pa_decode_gluon_aot import (
     pa_decode_gluon_aot,
 )
@@ -489,13 +489,6 @@ def create_argument_parser() -> argparse.ArgumentParser:
         default=None,
         help="Sequence partition size",
     )
-    parser.add_argument(
-        "--num_processes",
-        type=int,
-        default=32,
-        help="Number of parallel processes to use (default: use 1 CPU cores)",
-    )
-
     return parser
 
 
@@ -645,20 +638,10 @@ def run_multi_pa_gluon_test(
     use_torch_flash_ref_options,
     use_aot_impl_options,
     context_partition_size_options,
-    num_processes=None,
     sinks_options=None,
     sliding_window_options=None,
 ) -> pd.DataFrame:
-    """
-    Run all tests using multiprocessing for parallel execution.
-
-    Args:
-        num_processes: Number of parallel processes to use.
-                      If None, uses cpu_count().
-
-    Returns:
-        DataFrame containing all test results
-    """
+    """Run all tests using bounded multiprocessing parallelism."""
     if sliding_window_options is None:
         sliding_window_options = [0]
     if sinks_options is None:
@@ -816,22 +799,21 @@ def run_multi_pa_gluon_test(
     total = len(test_configs)
     print(f"Total test cases after deduplication: {total}")
     print(f"Removed {total_before_dedup - total} duplicate configurations")
+    if total == 0:
+        return pd.DataFrame()
 
     # Prepare arguments for multiprocessing
     test_args = [(config, idx + 1, total) for idx, config in enumerate(test_configs)]
 
-    # Determine number of processes
-    if num_processes is None:
-        num_processes = min(cpu_count(), total)
-    else:
-        num_processes = min(cpu_count(), num_processes)
-        num_processes = min(total, num_processes)
+    num_processes = get_worker_count_for(total)
     print(f"Using {num_processes} parallel processes\n")
 
     # Run tests in parallel using spawn context to avoid CUDA reinitialization issues
     mp_context = multiprocessing.get_context("spawn")
     with concurrent.futures.ProcessPoolExecutor(
-        max_workers=num_processes, mp_context=mp_context
+        max_workers=num_processes,
+        mp_context=mp_context,
+        initializer=configure_worker_subprocesses,
     ) as executor:
         results = list(executor.map(_run_single_test, test_args))
 
@@ -880,7 +862,6 @@ def parse_arg_and_run_test():
         use_torch_flash_ref_options,
         use_aot_impl_options,
         context_partition_size_options,
-        num_processes=args.num_processes,
         sinks_options=sinks_options,
         sliding_window_options=sliding_window_options,
     )

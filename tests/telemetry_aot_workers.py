@@ -10,14 +10,15 @@ import time
 
 import psutil
 
-from aiter.utility.worker_utils import get_cpu_worker_budget
+from aiter_worker_limits import (
+    CGROUP_TASK_RESERVE,
+    CGROUP_TASKS_PER_WORKER,
+    EST_WORKER_RSS_BYTES,
+    get_automatic_worker_budgets,
+)
 
 DURATION_SECONDS = int(os.environ.get("AITER_TELEMETRY_SECONDS", "60"))
 SAMPLE_SECONDS = 0.02
-# Approximate observed peak RSS per worker, rounded to 1.5 GB.
-MEMORY_PER_WORKER_BYTES = 1_500_000_000
-CGROUP_TASKS_PER_WORKER = 12
-CGROUP_TASK_RESERVE = 16
 LOG_PATH = pathlib.Path("/tmp/aiter-aot-telemetry.log")
 RESULT_PATH = pathlib.Path("/tmp/aiter-aot-telemetry.json")
 
@@ -92,15 +93,9 @@ def main() -> None:
     env.setdefault("AITER_SUBPROCESS_MAX_JOBS", "1")
 
     available = psutil.virtual_memory().available
-    cpu_budget = get_cpu_worker_budget()
-    memory_budget = max(1, available // MEMORY_PER_WORKER_BYTES)
+    cpu_budget, memory_budget, task_budget = get_automatic_worker_budgets()
     baseline_pids = cgroup_pids()
     pids_max = cgroup_pids_max()
-    task_budget = (
-        max(1, (pids_max - baseline_pids - CGROUP_TASK_RESERVE) // CGROUP_TASKS_PER_WORKER)
-        if pids_max is not None
-        else None
-    )
     budgets = [cpu_budget, memory_budget]
     if task_budget is not None:
         budgets.append(task_budget)
@@ -110,7 +105,7 @@ def main() -> None:
     metrics = {
         "duration_seconds": DURATION_SECONDS,
         "available_memory_bytes": available,
-        "memory_per_worker_observed_bytes": MEMORY_PER_WORKER_BYTES,
+        "memory_per_worker_observed_bytes": EST_WORKER_RSS_BYTES,
         "memory_derived_workers": memory_budget,
         "cpu_derived_workers": cpu_budget,
         "cgroup_tasks_per_worker_assumption": CGROUP_TASKS_PER_WORKER,
@@ -118,7 +113,7 @@ def main() -> None:
         "cgroup_pids_max": pids_max,
         "task_derived_workers": task_budget,
         "predicted_workers": predicted_workers,
-        "predicted_worker_rss_bytes": predicted_workers * MEMORY_PER_WORKER_BYTES,
+        "predicted_worker_rss_bytes": predicted_workers * EST_WORKER_RSS_BYTES,
         "predicted_peak_cgroup_pids": baseline_pids
         + predicted_workers * CGROUP_TASKS_PER_WORKER,
         "baseline_cgroup_pids": baseline_pids,

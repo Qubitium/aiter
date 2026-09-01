@@ -1,7 +1,7 @@
 import concurrent.futures
 from collections import namedtuple
 
-from aiter.utility.worker_utils import configure_worker_subprocesses, get_worker_count
+from aiter_worker_limits import configure_worker_subprocesses, get_worker_count
 from csrc.cpp_itfs.mla.asm_mla_decode_fwd import compile
 
 MLAConfig = namedtuple(

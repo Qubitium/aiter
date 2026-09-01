@@ -26,7 +26,7 @@ from hipify.hipify_python import GeneratedFileCleaner
 from packaging.version import Version
 from setuptools.command.build_ext import build_ext
 
-from aiter_worker_limits import get_cpu_worker_budget
+from aiter_worker_limits import get_worker_count, get_worker_count_per_parent
 
 IS_WINDOWS = sys.platform == "win32"
 IS_LINUX = sys.platform.startswith("linux")
@@ -1531,23 +1531,23 @@ def _get_rocm_arch_flags(cflags: list[str] | None = None) -> list[str]:
 
 
 def _get_num_workers(verbose: bool) -> int | None:
-    max_jobs = os.environ.get("MAX_JOBS")
-    if max_jobs is not None and max_jobs.isdigit():
-        if verbose:
-            print(
-                f"Using envvar MAX_JOBS ({max_jobs}) as the number of workers...",
-                file=sys.stderr,
-            )
-    else:
-        max_jobs = get_cpu_worker_budget()
+    max_jobs = get_worker_count()
+    if verbose:
         print(
-            f"Using 80% CPU MAX_JOBS ({max_jobs}) as the number of workers...",
+            f"Using MAX_JOBS ({max_jobs}) as the number of workers...",
             file=sys.stderr,
         )
     prebuild_thread_num = os.environ.get("PREBUILD_THREAD_NUM")
     if prebuild_thread_num is not None:
-        max_jobs = int(max_jobs) / int(prebuild_thread_num)
-    return int(max_jobs)
+        try:
+            parent_count = int(prebuild_thread_num)
+        except ValueError as exc:
+            raise ValueError(
+                "PREBUILD_THREAD_NUM must be an integer, "
+                f"got {prebuild_thread_num!r}"
+            ) from exc
+        max_jobs = get_worker_count_per_parent(parent_count)
+    return max_jobs
 
 
 def _run_ninja_build(build_directory: str, verbose: bool, error_prefix: str) -> None:

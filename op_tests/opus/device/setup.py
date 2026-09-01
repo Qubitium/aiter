@@ -15,6 +15,8 @@ import subprocess
 import sys
 import time
 
+from aiter_worker_limits import configure_worker_subprocesses, get_worker_count_for
+
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _REPO_CSRC = os.path.normpath(
     os.path.join(_THIS_DIR, "..", "..", "..", "csrc", "include")
@@ -119,18 +121,12 @@ def _compile_one(args):
     return os.path.basename(src), elapsed_ms
 
 
-def build(verbose=False, jobs=None):
+def build(verbose=False):
     from concurrent.futures import ProcessPoolExecutor, as_completed
 
     hipcc = _find_hipcc()
     arch = _detect_arch()
     so_path = os.path.join(_THIS_DIR, _SO_NAME)
-
-    if jobs is None:
-        jobs = min(len(_CU_SOURCES), os.cpu_count() or 4)
-
-    if verbose:
-        print(f"[setup] arch={arch}, jobs={jobs}")
 
     # Per-arch skip list: kernels that use builtins not available on the
     # target arch. Skipped at .so build time so the rest of the suite
@@ -170,9 +166,15 @@ def build(verbose=False, jobs=None):
         obj = os.path.join(_THIS_DIR, s.replace(".cu", ".o"))
         extra = ["-mwavefrontsize64"] if s in _W64_SOURCES else []
         tasks.append((src, obj, hipcc, arch, verbose, extra))
+    jobs = get_worker_count_for(len(tasks))
+
+    if verbose:
+        print(f"[setup] arch={arch}, jobs={jobs}")
 
     objs = []
-    with ProcessPoolExecutor(max_workers=jobs) as pool:
+    with ProcessPoolExecutor(
+        max_workers=jobs, initializer=configure_worker_subprocesses
+    ) as pool:
         futures = {pool.submit(_compile_one, t): t for t in tasks}
         for fut in as_completed(futures):
             name, ms = fut.result()
@@ -246,11 +248,4 @@ if __name__ == "__main__":
         clean()
     else:
         verbose = "-v" in sys.argv or "--verbose" in sys.argv
-        jobs = None
-        for arg in sys.argv[1:]:
-            if arg.startswith("-j"):
-                try:
-                    jobs = int(arg[2:])
-                except ValueError:
-                    pass
-        build(verbose=verbose, jobs=jobs)
+        build(verbose=verbose)

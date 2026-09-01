@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 from packaging.version import Version, parse
 
-from aiter_worker_limits import get_cpu_worker_budget
+from aiter_worker_limits import get_worker_count
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, f"{this_dir}/utils/")
@@ -607,30 +607,7 @@ __host__ __device__ void func(){{std::tuple<int, int> t = std::tuple(1, 1);}}" |
 
 
 def check_and_set_ninja_worker():
-    if "MAX_JOBS" in os.environ:
-        return
-    max_num_jobs_cores = get_cpu_worker_budget()
-    import psutil
-
-    # calculate the maximum allowed NUM_JOBS based on free memory
-    free_memory_gb = psutil.virtual_memory().available / (1024**3)  # free memory in GB
-    max_num_jobs_memory = int(free_memory_gb / 0.5)  # assuming 0.5 GB per job
-
-    # pick lower value of jobs based on cores vs memory metric to minimize oom and swap usage during compilation
-    max_jobs = int(max(1, min(max_num_jobs_cores, max_num_jobs_memory)))
-    max_jobs_env = os.environ.get("MAX_JOBS")
-    if max_jobs_env is not None:
-        try:
-            max_processes = int(max_jobs_env)
-            # too large value
-            if max_processes > max_jobs:
-                os.environ["MAX_JOBS"] = str(max_jobs)
-        # error value
-        except ValueError:
-            os.environ["MAX_JOBS"] = str(max_jobs)
-    # none value
-    else:
-        os.environ["MAX_JOBS"] = str(max_jobs)
+    get_worker_count()
 
 
 def rename_cpp_to_cu(els, dst, hipify, recursive=False):

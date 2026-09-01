@@ -1,9 +1,8 @@
 import concurrent.futures
-import os
 from collections import namedtuple
 
+from aiter_worker_limits import configure_worker_subprocesses, get_worker_count
 from csrc.cpp_itfs.pa.pa_v1 import compile
-from aiter.utility.worker_utils import configure_worker_subprocesses, get_worker_count
 
 PAConfig = namedtuple(
     "PAConfig",
@@ -106,7 +105,7 @@ def main():
         max_workers=get_worker_count(),
         initializer=configure_worker_subprocesses,
     ) as executor:
-        executor.map(process_config, configs)
+        list(executor.map(process_config, configs))
 
 
 if __name__ == "__main__":

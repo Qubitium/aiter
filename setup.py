@@ -10,7 +10,7 @@ import sys
 from setuptools import Distribution, setup
 from setuptools.command.build_ext import build_ext
 
-from aiter_worker_limits import get_cpu_worker_budget
+from aiter_worker_limits import get_worker_count, get_worker_count_for
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 OPT_COMPILER_CONFIG = os.path.join(this_dir, "aiter", "jit", "optCompilerConfig.json")
@@ -28,26 +28,6 @@ AITER_TRITON_ONLY = os.environ.get("AITER_TRITON_ONLY", "0") == "1" or IS_WINDOW
 if AITER_TRITON_ONLY:
     ENABLE_CK = False
     PREBUILD_KERNELS = False
-
-
-def getMaxJobs():
-    # calculate the maximum allowed NUM_JOBS based on cores
-    max_num_jobs_cores = get_cpu_worker_budget()
-
-    try:
-        import psutil
-
-        # calculate the maximum allowed NUM_JOBS based on free memory
-        free_memory_gb = psutil.virtual_memory().available / (1024**3)
-        max_num_jobs_memory = int(free_memory_gb / 0.5)  # assuming 0.5 GB per job
-    except ImportError:
-        # psutil may not be available during metadata extraction
-        max_num_jobs_memory = max_num_jobs_cores
-
-    # pick lower value of jobs based on cores vs memory metric to minimize oom and swap usage during compilation
-    max_jobs = int(max(1, min(max_num_jobs_cores, max_num_jobs_memory)))
-    return max_jobs
-
 
 def is_develop_mode():
     for arg in sys.argv:
@@ -387,13 +367,8 @@ if PREBUILD_KERNELS != 0:
                 third_party=one_opt_args["third_party"],
             )
 
-        prebuid_thread_num = 5
-        max_jobs = os.environ.get("MAX_JOBS")
-        if max_jobs is not None and max_jobs.isdigit() and int(max_jobs) > 0:
-            prebuid_thread_num = min(prebuid_thread_num, int(max_jobs))
-        else:
-            prebuid_thread_num = min(prebuid_thread_num, getMaxJobs())
-        os.environ["PREBUILD_THREAD_NUM"] = str(prebuid_thread_num)
+        prebuild_thread_num = get_worker_count_for(len(all_opts_args_build))
+        os.environ["PREBUILD_THREAD_NUM"] = str(prebuild_thread_num)
 
         # --- FlyDSL AOT pre-compilation (MOE + GEMM, before CK) ---
         _prev_aot_import = os.environ.get("AITER_AOT_IMPORT")
@@ -410,7 +385,7 @@ if PREBUILD_KERNELS != 0:
                 os.environ["AITER_AOT_IMPORT"] = _prev_aot_import
 
         # --- CK kernel builds ---
-        with ThreadPoolExecutor(max_workers=prebuid_thread_num) as executor:
+        with ThreadPoolExecutor(max_workers=prebuild_thread_num) as executor:
             list(executor.map(build_one_module, all_opts_args_build))
 
         # Retune GEMM shapes on the live GPU after the main build phase.
@@ -434,20 +409,7 @@ class NinjaBuildExtension(build_ext):
     """Custom build_ext that defers expensive operations until run() is called."""
 
     def run(self):
-        # Set MAX_JOBS for ninja
-        max_jobs_env = os.environ.get("MAX_JOBS")
-        if max_jobs_env is None:
-            max_jobs = getMaxJobs()
-            os.environ["MAX_JOBS"] = str(max_jobs)
-        else:
-            try:
-                if int(max_jobs_env) <= 0:
-                    raise ValueError("MAX_JOBS must be a positive integer")
-            except ValueError:
-                max_jobs = getMaxJobs()
-                os.environ["MAX_JOBS"] = str(max_jobs)
-
-        # Run the actual build
+        get_worker_count()
         super().run()
 
 

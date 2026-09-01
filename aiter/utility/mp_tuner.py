@@ -9,7 +9,7 @@ import torch
 
 from aiter import dtypes, logger
 from aiter.test_common import checkAllclose
-from aiter.utility.worker_utils import configure_worker_subprocesses
+from aiter_worker_limits import configure_worker_subprocesses
 
 _TASK_START_TIMES = None
 

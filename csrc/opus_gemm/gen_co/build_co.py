@@ -61,6 +61,8 @@ import subprocess
 import sys
 import tempfile
 
+from aiter_worker_limits import get_worker_count_for
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _OPUS_GEMM_DIR = os.path.dirname(_HERE)  # csrc/opus_gemm
 _CSRC_DIR = os.path.dirname(_OPUS_GEMM_DIR)  # csrc
@@ -455,15 +457,6 @@ def main():
         "tighter VGPR budgets spilling is the expected outcome, not a "
         "malfunction. The counts always land in build_info.json.",
     )
-    p.add_argument(
-        "--jobs",
-        "-j",
-        type=int,
-        default=max(1, (os.cpu_count() or 2) // 8),
-        help="parallel hipcc invocations. Each takes ~1 core for ~3 s, so the "
-        "default is deliberately well under nproc; a full sweep is thousands "
-        "of entries and serial is hours.",
-    )
     p.add_argument("--keep-temps", action="store_true")
     args = p.parse_args()
 
@@ -483,10 +476,11 @@ def main():
         raise SystemExit(
             "build_co: no pre-compiled entries -- check gen_co/co_kernels.json"
         )
+    jobs = get_worker_count_for(len(instances))
 
     workdir = tempfile.mkdtemp(prefix="opus_build_co_")
     try:
-        if args.jobs == 1:
+        if jobs == 1:
             built = [build_one(k, args, llvm_bin, workdir) for k in instances]
         else:
             # One hipcc per entry and they share nothing but the read-only headers,
@@ -495,8 +489,8 @@ def main():
             # Threads, not processes: every worker spends its life in subprocess.
             from concurrent.futures import ThreadPoolExecutor
 
-            print(f"[build_co] {len(instances)} entries on {args.jobs} jobs")
-            with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            print(f"[build_co] {len(instances)} entries on {jobs} jobs")
+            with ThreadPoolExecutor(max_workers=jobs) as pool:
                 built = list(
                     pool.map(lambda k: build_one(k, args, llvm_bin, workdir), instances)
                 )
