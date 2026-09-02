@@ -2,11 +2,13 @@
 
 import os
 import posixpath
+import warnings
 
 CPU_CORE_COUNT_UTILIZATION = 0.80
 # Approximate peak RSS observed per AOT worker, rounded up to 1.5 GB.
 EST_WORKER_RSS_BYTES = 1_500_000_000
 _WORKER_ENV = "AITER_MAX_JOBS"
+_LEGACY_WORKER_ENV = "MAX_JOBS"
 _PROC_SELF_CGROUP_PATH = "/proc/self/cgroup"
 _PROC_SELF_MOUNTINFO_PATH = "/proc/self/mountinfo"
 
@@ -188,6 +190,37 @@ def get_automatic_worker_budgets() -> tuple[int, int]:
     return (
         get_cpu_worker_budget(),
         max(1, _available_memory_bytes() // EST_WORKER_RSS_BYTES),
+    )
+
+
+def adopt_legacy_max_jobs() -> None:
+    """Adopt a valid legacy ``MAX_JOBS`` value at AITER-owned entrypoints.
+
+    This compatibility bridge must not be called from imports or runtime JIT
+    helpers: parent frameworks own their generic ``MAX_JOBS`` setting. AITER's
+    standalone build entrypoints call it explicitly before selecting workers.
+    """
+    if _WORKER_ENV in os.environ:
+        return
+
+    raw = os.environ.get(_LEGACY_WORKER_ENV)
+    if raw is None:
+        return
+
+    try:
+        jobs = int(raw)
+    except ValueError:
+        return
+
+    if jobs <= 0:
+        return
+
+    os.environ[_WORKER_ENV] = str(jobs)
+    warnings.warn(
+        "MAX_JOBS controlling standalone AITER builds is deprecated; "
+        "use AITER_MAX_JOBS instead.",
+        FutureWarning,
+        stacklevel=2,
     )
 
 

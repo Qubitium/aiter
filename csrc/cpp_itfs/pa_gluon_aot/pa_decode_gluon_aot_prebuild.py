@@ -16,7 +16,11 @@ import triton.language as tl
 import aiter
 from aiter import dtypes
 from aiter.test_common import benchmark
-from aiter_worker_limits import configure_worker_subprocesses, get_worker_count_for
+from aiter_worker_limits import (
+    adopt_legacy_max_jobs,
+    configure_worker_subprocesses,
+    get_worker_count_for,
+)
 from csrc.cpp_itfs.pa_gluon_aot.pa_decode_gluon_aot import (
     pa_decode_gluon_aot,
 )
@@ -995,6 +999,7 @@ def prebuild_normal_performance_cases_aot_so():
 
 
 if __name__ == "__main__":
+    adopt_legacy_max_jobs()
     prebuild_normal_accuracy_cases_aot_so()
     prebuild_normal_performance_cases_aot_so()
     get_so_files_size_and_count()

@@ -20,7 +20,11 @@ _REPO_ROOT = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", ".."))
 _REPO_CSRC = os.path.normpath(os.path.join(_REPO_ROOT, "csrc", "include"))
 sys.path.insert(0, _REPO_ROOT)
 
-from aiter_worker_limits import configure_worker_subprocesses, get_worker_count_for
+from aiter_worker_limits import (
+    adopt_legacy_max_jobs,
+    configure_worker_subprocesses,
+    get_worker_count_for,
+)
 
 _SO_NAME = "opus_device_test.so"
 
@@ -245,6 +249,7 @@ def clean():
 
 
 if __name__ == "__main__":
+    adopt_legacy_max_jobs()
     if "--clean" in sys.argv:
         clean()
     else:

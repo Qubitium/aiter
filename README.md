@@ -138,7 +138,7 @@ AITER_USE_SYSTEM_TRITON=1 python3 -m pip install -e .
 
 ### Build parallelism
 
-`AITER_MAX_JOBS` is AITER's optional top-level compilation-worker ceiling. A generic `MAX_JOBS` inherited from vLLM, SGLang, PyTorch, or another parent framework is ignored and left unchanged. On every worker-policy call, AITER selects the smaller of 80% of the CPUs available to the current process and effective available memory divided by the observed 1.5 GB RSS estimate per worker. Effective available memory is the smaller of host `MemAvailable` and remaining cgroup v2/v1 memory when a finite container limit is present.
+`AITER_MAX_JOBS` is AITER's optional top-level compilation-worker ceiling. A generic `MAX_JOBS` inherited from vLLM, SGLang, PyTorch, or another parent framework is ignored by AITER imports and runtime JIT and is always left unchanged. For backward compatibility, AITER-owned standalone build entrypoints adopt a valid positive `MAX_JOBS` as `AITER_MAX_JOBS` when the latter is unset and emit a `FutureWarning`. On every worker-policy call, AITER selects the smaller of 80% of the CPUs available to the current process and effective available memory divided by the observed 1.5 GB RSS estimate per worker. Effective available memory is the smaller of host `MemAvailable` and remaining cgroup v2/v1 memory when a finite container limit is present.
 
 When `AITER_MAX_JOBS` is set, its normalized value is applied as an additional upper bound; it never bypasses the live CPU or memory caps. Invalid values fall back to automatic sizing, and non-positive values impose a one-worker ceiling. Automatic results are not written back into the environment.
 
@@ -149,6 +149,8 @@ Examples:
 ```bash
 AITER_MAX_JOBS=8 python3 -m pip install -e .
 AITER_MAX_JOBS=8 python3 -m aiter.aot.pa
+# Legacy standalone usage; deprecated in favor of AITER_MAX_JOBS.
+MAX_JOBS=8 python3 setup.py build_ext
 ```
 
 ### Opus — Lightweight C++ Template for Kernel Development

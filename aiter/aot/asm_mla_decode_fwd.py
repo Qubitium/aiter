@@ -1,7 +1,11 @@
 import concurrent.futures
 from collections import namedtuple
 
-from aiter_worker_limits import configure_worker_subprocesses, get_worker_count_for
+from aiter_worker_limits import (
+    adopt_legacy_max_jobs,
+    configure_worker_subprocesses,
+    get_worker_count_for,
+)
 from csrc.cpp_itfs.mla.asm_mla_decode_fwd import compile
 
 MLAConfig = namedtuple(
@@ -53,4 +57,5 @@ def main():
 
 
 if __name__ == "__main__":
+    adopt_legacy_max_jobs()
     main()

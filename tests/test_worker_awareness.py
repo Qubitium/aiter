@@ -1,3 +1,4 @@
+import ast
 import inspect
 import os
 import pathlib
@@ -13,6 +14,7 @@ if str(_REPO_ROOT) not in sys.path:
 import aiter_worker_limits as worker_limits
 
 configure_worker_subprocesses = worker_limits.configure_worker_subprocesses
+adopt_legacy_max_jobs = worker_limits.adopt_legacy_max_jobs
 get_automatic_worker_budgets = worker_limits.get_automatic_worker_budgets
 get_cpu_worker_budget = worker_limits.get_cpu_worker_budget
 get_worker_count = worker_limits.get_worker_count
@@ -227,6 +229,89 @@ class WorkerAwarenessTest(unittest.TestCase):
             self.assertEqual(get_worker_count(), 3)
             self.assertEqual(os.environ["MAX_JOBS"], "99")
             self.assertNotIn("AITER_MAX_JOBS", os.environ)
+
+    def test_standalone_entrypoint_adopts_valid_legacy_max_jobs(self):
+        with patch.dict(os.environ, {"MAX_JOBS": "7"}, clear=True), self.assertWarns(
+            FutureWarning
+        ) as warning:
+            adopt_legacy_max_jobs()
+            self.assertEqual(os.environ["MAX_JOBS"], "7")
+            self.assertEqual(os.environ["AITER_MAX_JOBS"], "7")
+            self.assertIn(
+                "use AITER_MAX_JOBS instead", str(warning.warnings[0].message)
+            )
+
+    def test_explicit_aiter_max_jobs_prevents_legacy_adoption(self):
+        with patch.dict(
+            os.environ,
+            {"AITER_MAX_JOBS": "3", "MAX_JOBS": "7"},
+            clear=True,
+        ), patch.object(worker_limits.warnings, "warn") as warn:
+            adopt_legacy_max_jobs()
+
+            self.assertEqual(os.environ["AITER_MAX_JOBS"], "3")
+            self.assertEqual(os.environ["MAX_JOBS"], "7")
+            warn.assert_not_called()
+
+    def test_invalid_legacy_max_jobs_is_not_adopted(self):
+        for raw_value in ("", "auto", "0", "-7"):
+            with self.subTest(raw_value=raw_value), patch.dict(
+                os.environ, {"MAX_JOBS": raw_value}, clear=True
+            ), patch.object(worker_limits.warnings, "warn") as warn:
+                adopt_legacy_max_jobs()
+
+                self.assertEqual(os.environ["MAX_JOBS"], raw_value)
+                self.assertNotIn("AITER_MAX_JOBS", os.environ)
+                warn.assert_not_called()
+
+    def test_adopted_legacy_ceiling_remains_clamped_to_live_limits(self):
+        with patch.dict(os.environ, {"MAX_JOBS": "99"}, clear=True), patch.object(
+            worker_limits, "get_automatic_worker_budgets", return_value=(4, 3)
+        ):
+            with self.assertWarns(FutureWarning):
+                adopt_legacy_max_jobs()
+            self.assertEqual(get_worker_count(), 3)
+
+    def test_legacy_adoption_is_wired_only_at_owned_entrypoints(self):
+        guarded_entrypoints = (
+            "aiter/aot/asm_mla_decode_fwd.py",
+            "aiter/aot/pa.py",
+            "aiter/aot/pa_ragged.py",
+            "aiter/aot/pa_v1.py",
+            "aiter/aot/sampling.py",
+            "aiter/aot/flydsl/chunk_gdn_h.py",
+            "aiter/aot/flydsl/gemm.py",
+            "aiter/aot/flydsl/grouped_moe.py",
+            "aiter/aot/flydsl/moe.py",
+            "csrc/cpp_itfs/pa_gluon_aot/pa_decode_gluon_aot_prebuild.py",
+            "csrc/opus_gemm/gen_co/build_co.py",
+            "op_tests/opus/device/setup.py",
+        )
+        for relative_path in guarded_entrypoints:
+            with self.subTest(relative_path=relative_path):
+                tree = ast.parse((_REPO_ROOT / relative_path).read_text())
+                main_guards = [
+                    node
+                    for node in tree.body
+                    if isinstance(node, ast.If) and "__main__" in ast.unparse(node.test)
+                ]
+                self.assertEqual(len(main_guards), 1)
+                calls = [
+                    node.func.id
+                    for node in ast.walk(main_guards[0])
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                ]
+                self.assertIn("adopt_legacy_max_jobs", calls)
+
+        setup_tree = ast.parse((_REPO_ROOT / "setup.py").read_text())
+        top_level_calls = [
+            node.value.func.id
+            for node in setup_tree.body
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+        ]
+        self.assertIn("adopt_legacy_max_jobs", top_level_calls)
 
     def test_explicit_lower_aiter_max_jobs_is_honored(self):
         with patch.dict(os.environ, {"AITER_MAX_JOBS": "1"}, clear=True):

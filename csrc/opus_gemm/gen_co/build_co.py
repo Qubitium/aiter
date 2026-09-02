@@ -82,7 +82,7 @@ from codegen.gen_instances_gfx1250 import (
 # kid), and this script exists to create exactly those files.
 from opus_gemm_common import gfx1250_4wave_co_kernels_declared
 
-from aiter_worker_limits import get_worker_count_for
+from aiter_worker_limits import adopt_legacy_max_jobs, get_worker_count_for
 
 # Every pre-compiled family and the pipeline header each one's device body
 # lives in. The rest of the stub (traits/kargs/body names) comes from the
@@ -529,4 +529,5 @@ def main():
 
 
 if __name__ == "__main__":
+    adopt_legacy_max_jobs()
     main()

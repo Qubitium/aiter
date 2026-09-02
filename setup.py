@@ -10,7 +10,9 @@ import sys
 from setuptools import Distribution, setup
 from setuptools.command.build_ext import build_ext
 
-from aiter_worker_limits import get_worker_count
+from aiter_worker_limits import adopt_legacy_max_jobs, get_worker_count
+
+adopt_legacy_max_jobs()
 
 this_dir = os.path.dirname(os.path.abspath(__file__))
 OPT_COMPILER_CONFIG = os.path.join(this_dir, "aiter", "jit", "optCompilerConfig.json")
