@@ -157,8 +157,6 @@ Examples:
 ```bash
 AITER_MAX_JOBS=8 python3 -m pip install -e .
 AITER_MAX_JOBS=8 python3 -m aiter.aot.pa
-# Legacy standalone usage; deprecated in favor of AITER_MAX_JOBS.
-MAX_JOBS=8 python3 setup.py build_ext
 ```
 
 ### Opus — Lightweight C++ Template for Kernel Development

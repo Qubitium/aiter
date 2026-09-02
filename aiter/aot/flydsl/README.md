@@ -80,8 +80,6 @@ Example:
 
 ```bash
 AITER_MAX_JOBS=16 python -m aiter.aot.flydsl.moe
-# Deprecated compatibility for this standalone AOT entrypoint:
-MAX_JOBS=16 python -m aiter.aot.flydsl.moe
 ```
 
 An explicit `AITER_MAX_JOBS` always takes precedence. Legacy adoption copies
