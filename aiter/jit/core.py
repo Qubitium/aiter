@@ -21,8 +21,6 @@ from typing import Any, Optional
 
 from packaging.version import Version, parse
 
-from aiter_worker_limits import get_worker_count
-
 this_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, f"{this_dir}/utils/")
 from chip_info import get_gfx, get_gfx_list, get_gfx_runtime
@@ -638,10 +636,6 @@ __host__ __device__ void func(){{std::tuple<int, int> t = std::tuple(1, 1);}}" |
     return 554785 - 1
 
 
-def check_and_set_ninja_worker():
-    get_worker_count()
-
-
 def rename_cpp_to_cu(els, dst, hipify, recursive=False):
     def do_rename_and_mv(name, src, dst, ret):
         newName = name
@@ -1019,8 +1013,6 @@ def build_module(
         flags_hip += [f"--offload-arch={arch}" for arch in archs]
         flags_hip = sorted(set(flags_hip))  # remove same flags
         flags_hip = [el for el in flags_hip if hip_flag_checker(el)]
-        check_and_set_ninja_worker()
-
         def exec_blob(blob_gen_cmd, op_dir, src_dir, sources):
             if blob_gen_cmd:
                 blob_dir = f"{op_dir}/blob/"

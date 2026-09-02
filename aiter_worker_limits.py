@@ -1,5 +1,6 @@
 """Worker limits shared by setup and AITER runtime code."""
 
+import logging
 import os
 import posixpath
 import warnings
@@ -11,6 +12,9 @@ _WORKER_ENV = "AITER_MAX_JOBS"
 _LEGACY_WORKER_ENV = "MAX_JOBS"
 _PROC_SELF_CGROUP_PATH = "/proc/self/cgroup"
 _PROC_SELF_MOUNTINFO_PATH = "/proc/self/mountinfo"
+_logger = logging.getLogger(__name__)
+_cgroup_memory_diagnostic_emitted = False
+_last_cgroup_memory_observation: dict[str, object] | None = None
 
 
 def _process_cpu_count() -> int:
@@ -145,7 +149,10 @@ def _cgroup_memory_directories() -> list[tuple[str, str]]:
 
 def _cgroup_memory_remaining_bytes() -> int | None:
     """Return the tightest finite remaining-memory bound across cgroup ancestors."""
+    global _last_cgroup_memory_observation
+
     remaining = None
+    best_observation = None
     for version, directory in _cgroup_memory_directories():
         if version == "v2":
             limit_path = os.path.join(directory, "memory.max")
@@ -163,21 +170,110 @@ def _cgroup_memory_remaining_bytes() -> int | None:
         except (FileNotFoundError, OSError, ValueError):
             continue
 
+        usage_readable = True
         try:
             with open(usage_path) as usage_file:
                 usage = int(usage_file.read().strip())
         except (FileNotFoundError, OSError, ValueError):
-            usage = 0
+            # A finite limit with unknown usage must never be treated as an
+            # empty cgroup: that would fail open and overstate safe headroom.
+            usage = None
+            usage_readable = False
 
-        candidate = max(0, limit - usage)
-        remaining = candidate if remaining is None else min(remaining, candidate)
+        candidate = 0 if usage is None else max(0, limit - usage)
+        if remaining is None or candidate < remaining:
+            remaining = candidate
+            best_observation = {
+                "version": version,
+                "directory": directory,
+                "limit": limit,
+                "usage": usage,
+                "usage_readable": usage_readable,
+            }
+    _last_cgroup_memory_observation = best_observation
     return remaining
+
+
+def _read_cgroup_memory_stat(observation: dict[str, object]) -> dict[str, int]:
+    """Read diagnostic memory.stat fields for the selected cgroup bound."""
+    directory = str(observation["directory"])
+    try:
+        with open(os.path.join(directory, "memory.stat")) as stat_file:
+            values: dict[str, int] = {}
+            for line in stat_file:
+                key, _, raw_value = line.partition(" ")
+                if key in {
+                    "anon",
+                    "file",
+                    "active_file",
+                    "inactive_file",
+                    "slab_reclaimable",
+                }:
+                    try:
+                        values[key] = int(raw_value.strip())
+                    except ValueError:
+                        continue
+            return values
+    except (FileNotFoundError, OSError):
+        return {}
+
+
+def _maybe_log_cgroup_memory_diagnostic(memory_budget: int) -> None:
+    """Emit one diagnostic when conservative cgroup accounting is restrictive."""
+    global _cgroup_memory_diagnostic_emitted
+
+    if _cgroup_memory_diagnostic_emitted or memory_budget > 3:
+        return
+    observation = _last_cgroup_memory_observation
+    if observation is None:
+        return
+
+    stats = _read_cgroup_memory_stat(observation)
+    limit_gib = int(observation["limit"]) / 1024**3
+    usage = observation["usage"]
+    remaining = (
+        int(observation["limit"]) - int(usage) if usage is not None else 0
+    )
+    remaining_gib = max(0, remaining) / 1024**3
+    usage_text = (
+        f"{int(observation['usage']) / 1024**3:.2f} GiB"
+        if observation["usage"] is not None
+        else "unavailable"
+    )
+    stat_text = ", ".join(
+        f"{key}={value / 1024**3:.2f} GiB" for key, value in stats.items()
+    ) or "memory.stat unavailable"
+    unreadable_text = (
+        "; usage was unreadable, so remaining memory was conservatively treated as 0"
+        if not observation["usage_readable"]
+        else ""
+    )
+    log = _logger.warning if memory_budget == 1 else _logger.info
+    log(
+        "AITER worker budget limited to %d by cgroup memory: limit=%.2f GiB, "
+        "current=%s, remaining=%.2f GiB, worker_estimate=%.2f GiB; "
+        "cgroup current usage conservatively includes page cache (%s)%s",
+        memory_budget,
+        limit_gib,
+        usage_text,
+        remaining_gib,
+        EST_WORKER_RSS_BYTES / 1024**3,
+        stat_text,
+        unreadable_text,
+    )
+    _cgroup_memory_diagnostic_emitted = True
+
+
+def _available_memory_bounds() -> tuple[int, int | None]:
+    """Return host available memory and the optional cgroup bound."""
+    host_available = _host_available_memory_bytes()
+    cgroup_remaining = _cgroup_memory_remaining_bytes()
+    return host_available, cgroup_remaining
 
 
 def _available_memory_bytes() -> int:
     """Return memory available under both host and cgroup constraints."""
-    host_available = _host_available_memory_bytes()
-    cgroup_remaining = _cgroup_memory_remaining_bytes()
+    host_available, cgroup_remaining = _available_memory_bounds()
     return (
         host_available
         if cgroup_remaining is None
@@ -187,10 +283,17 @@ def _available_memory_bytes() -> int:
 
 def get_automatic_worker_budgets() -> tuple[int, int]:
     """Return the CPU and memory worker budgets."""
-    return (
-        get_cpu_worker_budget(),
-        max(1, _available_memory_bytes() // EST_WORKER_RSS_BYTES),
+    cpu_budget = get_cpu_worker_budget()
+    host_available, cgroup_remaining = _available_memory_bounds()
+    available_memory = (
+        host_available
+        if cgroup_remaining is None
+        else min(host_available, cgroup_remaining)
     )
+    memory_budget = max(1, available_memory // EST_WORKER_RSS_BYTES)
+    if cgroup_remaining is not None and cgroup_remaining <= host_available:
+        _maybe_log_cgroup_memory_diagnostic(memory_budget)
+    return cpu_budget, memory_budget
 
 
 def adopt_legacy_max_jobs() -> None:

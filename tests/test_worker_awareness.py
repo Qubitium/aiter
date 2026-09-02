@@ -51,8 +51,8 @@ class WorkerAwarenessTest(unittest.TestCase):
             worker_limits, "get_cpu_worker_budget", return_value=6
         ), patch.object(
             worker_limits,
-            "_available_memory_bytes",
-            return_value=3 * worker_limits.EST_WORKER_RSS_BYTES,
+            "_available_memory_bounds",
+            return_value=(3 * worker_limits.EST_WORKER_RSS_BYTES, None),
         ):
             self.assertEqual(get_automatic_worker_budgets(), (6, 3))
 
@@ -182,6 +182,92 @@ class WorkerAwarenessTest(unittest.TestCase):
 
         self.assertEqual(remaining, 5 * 1024**3)
 
+    def test_finite_cgroup_with_unreadable_usage_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            directory = pathlib.Path(tempdir)
+            (directory / "memory.max").write_text(str(8 * 1024**3))
+            with patch.object(
+                worker_limits,
+                "_cgroup_memory_directories",
+                return_value=[("v2", str(directory))],
+            ):
+                remaining = worker_limits._cgroup_memory_remaining_bytes()
+
+        self.assertEqual(remaining, 0)
+
+    def test_cgroup_memory_diagnostic_reports_page_cache_once(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            directory = pathlib.Path(tempdir)
+            (directory / "memory.max").write_text(str(4 * 1024**3))
+            (directory / "memory.current").write_text(str(3 * 1024**3))
+            (directory / "memory.stat").write_text(
+                "anon 1073741824\n"
+                "file 2147483648\n"
+                "active_file 536870912\n"
+                "inactive_file 1610612736\n"
+                "slab_reclaimable 268435456\n"
+            )
+            previous_diagnostic_state = (
+                worker_limits._cgroup_memory_diagnostic_emitted
+            )
+            worker_limits._cgroup_memory_diagnostic_emitted = False
+            try:
+                with patch.object(
+                    worker_limits,
+                    "_cgroup_memory_directories",
+                    return_value=[("v2", str(directory))],
+                ), patch.object(
+                    worker_limits,
+                    "_host_available_memory_bytes",
+                    return_value=256 * 1024**3,
+                ), patch.object(
+                    worker_limits, "_process_cpu_count", return_value=64
+                ), self.assertLogs(
+                    worker_limits._logger, level="WARNING"
+                ) as logs:
+                    self.assertEqual(
+                        worker_limits.get_automatic_worker_budgets(), (51, 1)
+                    )
+                    self.assertEqual(
+                        worker_limits.get_automatic_worker_budgets(), (51, 1)
+                    )
+                self.assertEqual(len(logs.output), 1)
+                self.assertIn("page cache", logs.output[0])
+                self.assertIn("inactive_file", logs.output[0])
+            finally:
+                worker_limits._cgroup_memory_diagnostic_emitted = (
+                    previous_diagnostic_state
+                )
+
+    def test_cgroup_diagnostic_skips_host_limited_budget(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            directory = pathlib.Path(tempdir)
+            (directory / "memory.max").write_text(str(32 * 1024**3))
+            (directory / "memory.current").write_text(str(1 * 1024**3))
+            previous_diagnostic_state = (
+                worker_limits._cgroup_memory_diagnostic_emitted
+            )
+            worker_limits._cgroup_memory_diagnostic_emitted = False
+            try:
+                with patch.object(
+                    worker_limits,
+                    "_available_memory_bounds",
+                    return_value=(1 * 1024**3, 31 * 1024**3),
+                ), patch.object(
+                    worker_limits, "_process_cpu_count", return_value=64
+                ), patch.object(
+                    worker_limits._logger, "warning"
+                ) as warning, patch.object(worker_limits._logger, "info") as info:
+                    self.assertEqual(
+                        worker_limits.get_automatic_worker_budgets(), (51, 1)
+                    )
+                warning.assert_not_called()
+                info.assert_not_called()
+            finally:
+                worker_limits._cgroup_memory_diagnostic_emitted = (
+                    previous_diagnostic_state
+                )
+
     def test_container_memory_caps_large_host_worker_budget(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
             worker_limits,
@@ -199,7 +285,9 @@ class WorkerAwarenessTest(unittest.TestCase):
 
     def test_four_cpu_worker_count_uses_eighty_percent(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
-            worker_limits, "_available_memory_bytes", return_value=10 * 1024**3
+            worker_limits,
+            "_available_memory_bounds",
+            return_value=(10 * 1024**3, None),
         ), patch.object(worker_limits, "_process_cpu_count", return_value=4):
             self.assertEqual(get_worker_count(), 3)
             self.assertNotIn("AITER_MAX_JOBS", os.environ)
@@ -224,7 +312,9 @@ class WorkerAwarenessTest(unittest.TestCase):
 
     def test_framework_max_jobs_is_ignored(self):
         with patch.dict(os.environ, {"MAX_JOBS": "99"}, clear=True), patch.object(
-            worker_limits, "_available_memory_bytes", return_value=10 * 1024**3
+            worker_limits,
+            "_available_memory_bounds",
+            return_value=(10 * 1024**3, None),
         ), patch.object(worker_limits, "_process_cpu_count", return_value=4):
             self.assertEqual(get_worker_count(), 3)
             self.assertEqual(os.environ["MAX_JOBS"], "99")
@@ -337,7 +427,9 @@ class WorkerAwarenessTest(unittest.TestCase):
 
     def test_zero_memory_capacity_still_returns_one_worker(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
-            worker_limits, "_available_memory_bytes", return_value=0
+            worker_limits,
+            "_available_memory_bounds",
+            return_value=(0, None),
         ), patch.object(worker_limits, "_process_cpu_count", return_value=1):
             self.assertEqual(get_worker_count(), 1)
             self.assertNotIn("AITER_MAX_JOBS", os.environ)
@@ -345,8 +437,8 @@ class WorkerAwarenessTest(unittest.TestCase):
     def test_available_memory_caps_default_workers(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(
             worker_limits,
-            "_available_memory_bytes",
-            return_value=4 * worker_limits.EST_WORKER_RSS_BYTES,
+            "_available_memory_bounds",
+            return_value=(4 * worker_limits.EST_WORKER_RSS_BYTES, None),
         ), patch.object(worker_limits, "_process_cpu_count", return_value=64):
             self.assertEqual(get_worker_count(), 4)
             self.assertNotIn("AITER_MAX_JOBS", os.environ)
