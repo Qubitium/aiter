@@ -479,7 +479,9 @@ class BuildExtension(build_ext):
         The Ninja backend uses AITER's live CPU and memory worker budget. One
         can impose an additional ceiling by setting the `AITER_MAX_JOBS`
         environment variable to an integer. The live limits are recalculated
-        for every build. Non-positive values impose one worker.
+        for every build. Non-positive values impose one worker. Runtime JIT
+        deliberately ignores generic `MAX_JOBS`; legacy adoption is limited to
+        AITER-owned standalone build entrypoints.
     """
 
     @classmethod

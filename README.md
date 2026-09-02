@@ -142,6 +142,14 @@ AITER_USE_SYSTEM_TRITON=1 python3 -m pip install -e .
 
 When `AITER_MAX_JOBS` is set, its normalized value is applied as an additional upper bound; it never bypasses the live CPU or memory caps. Invalid values fall back to automatic sizing, and non-positive values impose a one-worker ceiling. Automatic results are not written back into the environment.
 
+Worker-ceiling precedence is:
+
+1. An explicitly set `AITER_MAX_JOBS` is AITER's requested ceiling.
+2. Otherwise, AITER-owned standalone entrypoints—package/setup builds, AOT CLIs, and standalone PA-Gluon or OPUS builders—copy a valid positive legacy `MAX_JOBS` into `AITER_MAX_JOBS` and warn that it is deprecated.
+3. Otherwise, AITER uses automatic sizing.
+
+The compatibility bridge never changes `MAX_JOBS`, and both explicit and adopted ceilings remain clamped by the live CPU and memory budgets. It is deliberately not called by `import aiter`, runtime JIT helpers, or the generic worker-policy function.
+
 Process-pool workers force nested AITER, Ninja, CMake, Make, OpenMP, BLAS, and NumExpr compilation fanout to one.
 
 Examples:

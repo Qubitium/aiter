@@ -91,6 +91,14 @@ Environment Variables
      - Minimum of 80% of process-available CPUs and effective host/container
        available-memory capacity
 
+Worker-ceiling precedence is explicit ``AITER_MAX_JOBS`` first, then a valid
+positive legacy ``MAX_JOBS`` only at AITER-owned standalone entrypoints, then
+automatic sizing. The compatibility entrypoints are package/setup builds,
+AOT CLIs, and standalone PA-Gluon or OPUS builders. Adoption copies the value
+without modifying ``MAX_JOBS`` and emits a ``FutureWarning``. Explicit and
+adopted values are ceilings only: live CPU and memory budgets always clamp
+them. Imports and runtime JIT never perform legacy adoption.
+
 Example Configurations
 """"""""""""""""""""""
 
