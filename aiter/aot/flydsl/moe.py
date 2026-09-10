@@ -53,6 +53,7 @@ from aiter.ops.flydsl.moe_kernels import (
     runtime_swiglu_limit,
 )
 from aiter.ops.flydsl.mxfp4_kname import parse_flydsl_v2_gemm2_kernel
+from aiter_worker_limits import adopt_legacy_max_jobs
 
 # Keep the default AOT coverage aligned with runtime config resolution.
 DEFAULT_CSVS = [
@@ -923,6 +924,11 @@ def _precompile_a16w4_to_cache(
                 tile_n=g2_tile_n,
                 tile_k=g2_tile_k,
                 w_dtype=b_dtype,
+                epilog=(
+                    "reduce"
+                    if b_dtype == "int4" and kwargs.get("mode") == "reduce"
+                    else "atomic"
+                ),
                 **common,
             )
 
@@ -1171,4 +1177,5 @@ def main():
 
 
 if __name__ == "__main__":
+    adopt_legacy_max_jobs()
     main()

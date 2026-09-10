@@ -26,8 +26,13 @@ if [[ "$MULTIGPU" == "TRUE" ]]; then
 else
     if [[ -z "${AITER_TEST:-}" ]]; then
         echo "AITER_TEST is not set"
-        # Recursively find all files under op_tests, excluding op_tests/multigpu_tests
-        mapfile -t files < <(find op_tests -maxdepth 1 -type f -name "*.py" | sort)
+        # Run the operator tests and the focused regression/unit-test suite.
+        mapfile -t files < <(
+            {
+                find op_tests -maxdepth 1 -type f -name "test_*.py"
+                find tests -maxdepth 1 -type f -name "test_*.py"
+            } | LC_ALL=C sort
+        )
     else
         # If AITER_TEST contains multiple files separated by whitespace, convert to an array
         read -r -a files <<< "$AITER_TEST"
@@ -104,6 +109,18 @@ for file in "${sharded_files[@]}"; do
                         --combine fused --layers 2 --acc_verify 1
                 '
                 _ "$file"
+            )
+            ;;
+        op_tests/multigpu_tests/test_comm_fused_moe.py)
+            {
+                echo "Running comm-fused MoE production validation on 8 GPUs when supported"
+            } | tee -a latest_test.log
+            test_cmd=(
+                timeout 60m
+                torchrun
+                --standalone
+                --nproc_per_node=8
+                "$file"
             )
             ;;
         op_tests/test_mla_persistent.py|op_tests/test_mla_persistent_round_robin.py)
