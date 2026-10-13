@@ -44,9 +44,12 @@ from aiter.ops.flydsl.moe_common import (
     get_flydsl_activation_name,
 )
 from aiter.ops.flydsl.mxfp4_kname import (
+    ATOMIC_STAGE2_ENV,
     _is_mxfp4_kname,
     _parse_mxfp4_g1_kname,
     _parse_mxfp4_g2_kname,
+    atomic_stage2_opt_in,
+    deterministic_v2_gemm2_name,
     native_scale_layout_for,
     parse_flydsl_v2_gemm2_kernel,
     parse_g2_kname_any,
@@ -2544,6 +2547,8 @@ def _mxfp4_a4w4_stage2_fw(
     bias2=None,
     kernelName2="",
     reverse_sorted=None,
+    expert_mask=None,
+    topk_ids=None,
     **_kwargs,
 ):
 
@@ -2594,6 +2599,8 @@ def _mxfp4_a4w4_stage2_fw(
             bias2=bias2,
             block_m=block_m,
             reverse_sorted=reverse_sorted,
+            expert_mask=expert_mask,
+            topk_ids=topk_ids,
         )
     if bias2 is not None:
         raise ValueError(f"MXMOE GEMM2 {kernelName2!r} does not support bias")
@@ -2627,6 +2634,22 @@ def _mxfp4_a4w4_stage2_fw(
     if out is not moe_out:
         moe_out.copy_(out)
     return moe_out
+
+
+def _is_flydsl_v2_layout_stage2(stage2) -> bool:
+    """True for the layout-v2 GEMM2 epilogue, direct or behind the MXMOE front-end.
+
+    ``_mxfp4_a4w4_stage2_fw`` dispatches on ``kernelName2``: a
+    ``flydsl_moe2_layout_`` name is the same v2 GEMM2 reached through the MXMOE
+    stage-1 front-end, so both spellings need the same stage-2 arguments.
+    """
+    func = getattr(stage2, "func", stage2)
+    if func is _flydsl_v2_stage2_wrapper:
+        return True
+    if func is not _mxfp4_a4w4_stage2_fw:
+        return False
+    keywords = getattr(stage2, "keywords", None) or {}
+    return str(keywords.get("kernelName2", "")).startswith("flydsl_moe2_layout_")
 
 
 def _mxfp4_scale_u8(scale):
@@ -2771,10 +2794,11 @@ def _flydsl_v2_stage2_wrapper(
                 dtype=out.dtype,
                 device=out.device,
             )
-        if expert_mask is not None:
-            # EP sorting omits remote and fake routes, so GEMM2 intentionally
-            # leaves their per-route slots unwritten. Zero them before the
-            # masked reduction to prevent speculative loads of stale NaN data.
+        if topk_ids is None:
+            # Sorting drops the routes it cannot place (a negative router id
+            # always, masked experts under EP) and GEMM2 leaves those per-route
+            # slots unwritten. _run_moe_reduction skips them when it can read
+            # the ids; without them the buffer has to be initialized here.
             target.zero_()
     mxfp4_moe_gemm2(
         inter_sorted_quant=_mxfp4_scale_u8(inter_states),
@@ -2929,6 +2953,54 @@ def _can_reroute_mxfp4_to_flydsl(
         and use_g1u1
         and not doweight_stage1
     )
+
+
+# MXFP4 MoE stage2 runs the deterministic per-route ``reduce`` epilogue by
+# default; the ``atomic`` epilogue is an order-dependent rollback switch. See
+# _apply_mxfp4_stage2_determinism_policy.
+@functools.lru_cache(maxsize=128)
+def _log_mxfp4_stage2_policy(kernel2, selected, keys):
+    """Log one decision per (row, kernel, outcome); bounded by the cache."""
+    if selected:
+        logger.info(
+            "[fused_moe] MXFP4 stage2 deterministic epilogue selected "
+            f"keys={keys} rejected_kernel={kernel2} selected_kernel={selected}"
+        )
+    else:
+        logger.warning(
+            "[fused_moe] MXFP4 atomic stage2 epilogue re-enabled by "
+            f"{ATOMIC_STAGE2_ENV}=1; its accumulation order is not "
+            "reproducible, so MTP/speculative decoding and prefix reuse can "
+            f"diverge keys={keys} kernel={kernel2}"
+        )
+
+
+def _apply_mxfp4_stage2_determinism_policy(cfg, *, keys):
+    """Run the MXFP4 stage2 epilogue that is reproducible across launches.
+
+    The v2 layout GEMM2 accumulates one token's routed contributions with BF16
+    read-modify-write adds in its ``atomic`` epilogue, so the rounding of every
+    partial sum depends on workgroup arrival order and two launches with
+    identical inputs can return different bits -- which breaks MTP/speculative
+    decoding and prefix reuse. Tuned rows that name an atomic v2 layout GEMM2
+    are rewritten to the epilogue-only ``reduce`` sibling, which writes one
+    private row per (token, route) and reduces them in fixed order; both
+    epilogues compile from the same tile/dtype parameters. Every other stage-2
+    family is left alone. ``AITER_MXFP4_ATOMIC_STAGE2=1`` keeps the tuned
+    epilogue as a rollback switch for a shape that regressed in performance.
+    """
+    if cfg is None:
+        return cfg
+    kernel2 = str(cfg.get("kernelName2", "") or "").strip()
+    reduce2 = deterministic_v2_gemm2_name(kernel2)
+    if reduce2 is None:
+        return cfg
+    atomic = atomic_stage2_opt_in()
+    _log_mxfp4_stage2_policy(kernel2, None if atomic else reduce2, keys)
+    if atomic:
+        return cfg
+    # Never mutate the cached tuning row: it still serves the atomic opt-in.
+    return {**cfg, "kernelName2": reduce2}
 
 
 @functools.lru_cache(maxsize=2048)
@@ -3180,6 +3252,10 @@ def get_2stage_cfgs(
         cfg = _lookup_cfg(cfg_2stages)
         if cfg is None:
             logger.warning(f"Fmoe tuning not support for {keys}")
+
+    # Apply the epilogue policy before the validation below so every later
+    # check and the stage2 metadata are built from the kernel that will run.
+    cfg = _apply_mxfp4_stage2_determinism_policy(cfg, keys=keys)
 
     if cfg is not None:
         kn1 = str(cfg.get("kernelName1", "") or "").strip()
@@ -4330,29 +4406,27 @@ def fused_moe_2stages(
         extra_stage1_args["situ_linear_beta"] = (
             25.0 if linear_beta is None else float(linear_beta)
         )
-    # EP: forward expert_mask + topk_ids to the flydsl stage2 wrapper so it can
-    # switch to reduce mode and fuse the validity gather in compile_moe_reduction.
-    if (
-        stage2_func
-        in (
-            _flydsl_stage2_wrapper,
-            _flydsl_v2_stage2_wrapper,
-        )
-        and expert_mask is not None
-    ):
-        extra_stage2_args["expert_mask"] = expert_mask
+    # moe_sorting drops the routes it cannot place (negative router ids always,
+    # masked experts under EP) and GEMM2 leaves their per-route slots unwritten.
+    # The flydsl reduce epilogues skip those slots when handed the ids, so give
+    # them to every wrapper that can reach a reduce kernel -- EP still needs the
+    # mask on top for the remote-expert routes.
+    if stage2_func in (_flydsl_stage2_wrapper, _flydsl_v2_stage2_wrapper):
         extra_stage2_args["topk_ids"] = topk_ids
-    if not doweight_stage1 and _flydsl_stage2_fp8_enabled():
+        if expert_mask is not None:
+            extra_stage2_args["expert_mask"] = expert_mask
+    elif _is_flydsl_v2_layout_stage2(metadata.stage2):
+        # Same v2 GEMM2, reached through the MXMOE stage-1 front-end.
+        extra_stage2_args["topk_ids"] = topk_ids
+        if expert_mask is not None:
+            extra_stage2_args["expert_mask"] = expert_mask
+    if (
+        not doweight_stage1
+        and _flydsl_stage2_fp8_enabled()
+        and _is_flydsl_v2_layout_stage2(metadata.stage2)
+    ):
         # FP8 route-output reduction applies the route weights after GEMM2.
-        stage2_keywords = getattr(metadata.stage2, "keywords", None) or {}
-        uses_flydsl_v2_stage2 = stage2_func is _flydsl_v2_stage2_wrapper or (
-            stage2_func is _mxfp4_a4w4_stage2_fw
-            and str(stage2_keywords.get("kernelName2", "")).startswith(
-                "flydsl_moe2_layout_"
-            )
-        )
-        if uses_flydsl_v2_stage2:
-            extra_stage2_args["topk_weights"] = topk_weights
+        extra_stage2_args["topk_weights"] = topk_weights
     if stage2_func is _opus_a8w4.opus_a8w4_stage2_wrapper:
         extra_stage2_args["stage2_fp8_enabled"] = _opus_stage2_fp8_enabled()
     if m_indices is not None:
