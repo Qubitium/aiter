@@ -16,7 +16,9 @@ families keep their (faster) dynamic policy.
 """
 
 import pytest
+import torch
 
+from aiter.jit.utils.chip_info import get_cu_num, get_gfx_runtime
 from aiter.ops import mhc
 from aiter.ops.mhc import (
     _MHC_STABLE_PRE_FAMILIES,
@@ -25,6 +27,7 @@ from aiter.ops.mhc import (
     _MHC_STABLE_RMSNORM_LOGGED,
     get_mhc_pre_splitk,
     get_mhc_pre_splitk_large_m,
+    mhc_pre,
 )
 
 # The GLM-5.3 / DeepSeek-style mHC family: hc_mult=4, hidden_size=4096.
@@ -125,3 +128,65 @@ def test_stable_family_logs_once(stable_family):
     assert (STABLE_ARCH, STABLE_CU, STABLE_HC_HIDDEN) in _MHC_STABLE_PRE_LOGGED
     get_mhc_pre_splitk(16384, STABLE_HC_HIDDEN)
     assert len(_MHC_STABLE_PRE_LOGGED) == 1
+
+
+# --------------------------------------------------------------------------
+# End-to-end bitwise check (requires the pinned family's hardware).
+# --------------------------------------------------------------------------
+
+# 511 is deliberately odd: it makes every 511-row segment start at a different
+# row offset and is not a divisor of any tile size, so a segmented run cannot
+# accidentally line up with the whole-batch launch geometry.
+SEGMENT_ROWS = 511
+SEGMENT_COUNT = 11
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or get_gfx_runtime() != STABLE_ARCH
+    or get_cu_num() != STABLE_CU,
+    reason=f"pinned family requires {STABLE_ARCH} with {STABLE_CU} CUs",
+)
+def test_mhc_pre_outputs_are_exact_across_runtime_m():
+    """Same rows must produce bit-identical outputs regardless of batch M.
+
+    This is the user-visible symptom: a token verified at M=511 in a decode
+    step must match the same token computed as part of a 6049-row prefill.
+    """
+    torch.manual_seed(0)
+    hc_mult, hidden_size = 4, 4096
+    hc_hidden_size = hc_mult * hidden_size
+    whole_m = SEGMENT_ROWS * SEGMENT_COUNT
+
+    residual = torch.randn(
+        whole_m, hc_mult, hidden_size, dtype=torch.bfloat16, device="cuda"
+    )
+    # fn is FP32: mhc_pre_gemm_sqrsum takes a float* and a bf16 tensor here is
+    # reinterpreted as float, over-reading the buffer and faulting the queue.
+    fn = torch.randn(24, hc_hidden_size, dtype=torch.float32, device="cuda") * 0.02
+    hc_scale = torch.randn(3, dtype=torch.float32, device="cuda")
+    hc_base = torch.randn(24, dtype=torch.float32, device="cuda") * 0.1
+    norm_weight = torch.randn(hidden_size, dtype=torch.bfloat16, device="cuda")
+
+    def run(rows):
+        with torch.no_grad():
+            out = mhc_pre(rows, fn, hc_scale, hc_base, norm_weight=norm_weight)
+        torch.cuda.synchronize()
+        return out
+
+    whole = run(residual)
+    segments = [
+        run(residual[start : start + SEGMENT_ROWS])
+        for start in range(0, whole_m, SEGMENT_ROWS)
+    ]
+    joined = [torch.cat([seg[field] for seg in segments], dim=0) for field in range(3)]
+
+    for name, a, b in zip(
+        ("post_mix", "comb_mix", "layer_input"), whole, joined, strict=True
+    ):
+        assert torch.equal(a, b), (
+            f"{name} is not bitwise identical across runtime M "
+            f"(whole M={whole_m} vs {SEGMENT_COUNT} x M={SEGMENT_ROWS}); "
+            f"{(a != b).sum().item()}/{a.numel()} elements differ, "
+            f"max abs {(a.float() - b.float()).abs().max().item():.3e}"
+        )
