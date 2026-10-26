@@ -2421,13 +2421,10 @@ namespace aiter {
         } \
     } else if (hidden_size == 4096) { \
         if (get_gpu_arch() == "gfx950" && cu_num == 256) { \
-            /* Cross-M stability: the default ladder below switches the reduction \
-             * topology at m = 4*cu_num and m = 8*cu_num (1-row/1024 -> 2-row/512), \
-             * so the FP32 reduction tree -- and therefore the low bits of \
-             * h_post/h_res -- depends on the runtime batch size.  Pin the \
-             * 2-row/512 topology for this family.  use_nt only selects the store \
-             * cache policy, so the two arms are numerically identical. */ \
-            if (m >= 8 * cu_num) { \
+            /* Pin the 2-row/512 reduction topology across the m = 4*cu_num \
+             * boundary. Keep the existing use_nt threshold; use_nt does \
+             * not change the arithmetic. */ \
+            if (m > 8 * cu_num) { \
                 MHC_PRE_BIG_FUSE_RM_KERNEL_IMPL(5, 4, 2, 4096, 512, 512, true); \
             } else { \
                 MHC_PRE_BIG_FUSE_RM_KERNEL_IMPL(5, 4, 2, 4096, 512, 512, false); \

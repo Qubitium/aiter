@@ -113,30 +113,19 @@ def mhc_pre_big_fuse_rmsnorm(
 ) -> None: ...
 
 
-# Cross-M stability pins for mHC.
-#
-# Two independent launch policies depend on the runtime batch size M:
-#
-#   1. the pre GEMM's split-K selector (get_mhc_pre_splitk), and
-#   2. the fused pre RMSNorm's row-group / residual-block dispatch in
-#      csrc/kernels/mhc_kernels.cu.
-#
-# Every choice is individually deterministic, but the FP32 reduction tree changes
-# with M, so the low bits of h_post/h_res differ between prefill, decode and
-# speculative verification of the *same* token.  Those selectors feed every later
-# residual combine, so the drift can eventually flip a greedy token.  Pin one
-# reduction tree per (arch, cu_num, problem size) family.
+# Keep the pre GEMM reduction tree independent of runtime M for this family.
+# The fused output RMSNorm needs a matching native topology pin below. This
+# policy also covers large_m_splitk, but not the separate fused post+pre GEMM.
 _MHC_STABLE_PRE_FAMILIES = {
-    # GLM-5.3 / DeepSeek-style mHC with hc_mult=4 and hidden_size=4096
-    # (hc_hidden_size = hc_mult * hidden_size = 16384).
+    # hc_hidden_size = hc_mult * hidden_size = 4 * 4096.
     ("gfx950", 256, 16384): (16, 128),
 }
 _MHC_STABLE_PRE_LOGGED: set[tuple[str, int, int]] = set()
 
 # The fused output RMSNorm has its own M-dependent native launch policy.  Keep
 # this registry beside the selector pin so runtime telemetry makes both
-# invariants explicit.  The native kernel owns the matching launch dispatch;
-# keep the two in sync (op_tests/test_mhc_stable_policy.py checks the pair).
+# invariants explicit. The native kernel owns the matching launch dispatch;
+# cross-M GPU tests exercise it, including odd rows and dispatch boundaries.
 _MHC_STABLE_RMSNORM_FAMILIES = {
     # (num_rows, residual_block, norm_block)
     ("gfx950", 256, 4096): (2, 512, 512),
@@ -346,14 +335,22 @@ def mhc_res_unshuffle(shuffled: torch.Tensor) -> torch.Tensor:
     return mhc_res_unshuffle_flydsl(shuffled)
 
 
-@functools.lru_cache(maxsize=1024)
 def get_mhc_pre_splitk(
     m: int, hc_hidden_size: int, w_preshuffle_bf16: bool = False
 ) -> tuple[int, int]:
+    # Include the runtime family in the cache key so a configuration selected
+    # for another architecture/CU count cannot bypass the stability pin.
+    return _get_mhc_pre_splitk(
+        m, hc_hidden_size, w_preshuffle_bf16, get_gfx_runtime(), get_cu_num()
+    )
+
+
+@functools.lru_cache(maxsize=1024)
+def _get_mhc_pre_splitk(
+    m: int, hc_hidden_size: int, w_preshuffle_bf16: bool, arch: str, num_cu: int
+) -> tuple[int, int]:
     prefetch_stages = 2
     tile_m = 16 * 4
-    num_cu = get_cu_num()
-    arch = get_gfx_runtime()
     stable_config = _get_stable_mhc_pre_config(arch, num_cu, hc_hidden_size)
     if stable_config is not None:
         family = (arch, num_cu, hc_hidden_size)
@@ -1105,7 +1102,6 @@ def mhc_fused_post_pre(
     comb_mix = torch.empty(m, hc_mult, hc_mult, dtype=dtypes.fp32, device=device)
     layer_input_out = torch.empty(m, hidden_size, dtype=dtypes.bf16, device=device)
     if norm_weight is not None:
-        _log_stable_mhc_rmsnorm_family(hidden_size)
         mhc_pre_big_fuse_rmsnorm(
             post_mix,
             comb_mix,
