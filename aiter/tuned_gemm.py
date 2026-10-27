@@ -24,6 +24,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from aiter import dtypes, gemm_a16w16_asm, hipb_create_extension, hipb_mm, logger
+from aiter.execution_context import get_execution_phase, get_execution_role
 from aiter.jit.core import AITER_CONFIGS, AITER_LOG_TUNED_CONFIG
 from aiter.jit.utils.chip_info import get_cu_num, get_gfx
 from aiter.jit.utils.torch_guard import torch_compile_guard
@@ -220,6 +221,44 @@ def get_GEMM_A16W16_tuned_config(
     return None
 
 
+def _get_execution_phase_invariant_config(
+    *,
+    N: int,
+    K: int,
+    bias: bool,
+    dtype: str,
+    otype: str,
+    scaleAB: bool,
+    bpreshuffle: bool,
+    execution_role: str | None,
+    execution_phase: str | None,
+    gfx: str,
+    cu_num: int,
+) -> dict | None:
+    """Use one reduction family for full and cache-reuse target prefills."""
+    if (
+        gfx != "gfx950"
+        or cu_num != 256
+        or execution_role != "target"
+        or execution_phase != "prefill"
+        or N != 4096
+        or K != 1536
+        or bias
+        or str(dtype) != str(dtypes.bf16)
+        or str(otype) != str(dtypes.bf16)
+        or scaleAB
+        or bpreshuffle
+    ):
+        return None
+    return {
+        "libtype": "asm",
+        "solidx": 10,
+        "splitK": 1,
+        "kernelName": "_ZN5aiter24bf16gemm_bf16_tn_256x256E",
+        "_selection_source": "execution_phase_invariant_family",
+    }
+
+
 @functools.lru_cache(maxsize=4096)
 def get_GEMM_A16W16_config(
     M: int,
@@ -230,7 +269,24 @@ def get_GEMM_A16W16_config(
     otype: str,
     scaleAB: bool = False,
     bpreshuffle: bool = False,
+    execution_role: str | None = None,
+    execution_phase: str | None = None,
 ):
+    phase_config = _get_execution_phase_invariant_config(
+        N=N,
+        K=K,
+        bias=bias,
+        dtype=dtype,
+        otype=otype,
+        scaleAB=scaleAB,
+        bpreshuffle=bpreshuffle,
+        execution_role=execution_role,
+        execution_phase=execution_phase,
+        gfx=get_gfx(),
+        cu_num=get_cu_num(),
+    )
+    if phase_config is not None:
+        return phase_config
     config = get_GEMM_A16W16_tuned_config(
         M, N, K, bias, dtype, otype, scaleAB, bpreshuffle
     )
@@ -412,6 +468,8 @@ def _gemm_a16w16(
         otype=str(otype),
         scaleAB=scale_a is not None or scale_b is not None,
         bpreshuffle=bpreshuffle,
+        execution_role=get_execution_role(),
+        execution_phase=get_execution_phase(),
     )
     libtype = config["libtype"]
     solution_idx = config["solidx"]
