@@ -56,6 +56,8 @@ class TestExecutionContext(unittest.TestCase):
         with mock.patch.object(
             tuned, "get_gfx", return_value="gfx950"
         ), mock.patch.object(tuned, "get_cu_num", return_value=256), mock.patch.object(
+            tuned, "_opus_launch", mock.Mock()
+        ), mock.patch.object(
             tuned, "get_GEMM_A16W16_tuned_config", return_value=ordinary
         ):
             for _ in range(2):
@@ -66,16 +68,15 @@ class TestExecutionContext(unittest.TestCase):
                                 **args, execution_role=role, execution_phase=phase
                             )
                             if (role, phase) == ("target", "prefill"):
-                                self.assertEqual(
-                                    config["kernelName"],
-                                    "_ZN5aiter24bf16gemm_bf16_tn_256x256E",
-                                )
-                                self.assertEqual(config["splitK"], 1)
+                                self.assertEqual(config["libtype"], "opus")
+                                self.assertEqual(config["solidx"], 6403)
+                                self.assertEqual(config["splitK"], 0)
                             else:
                                 self.assertEqual(config, ordinary)
 
     def test_phase_override_is_limited_to_supported_family(self):
         args = {
+            "M": 96,
             "N": 4096,
             "K": 1536,
             "bias": False,
@@ -104,6 +105,47 @@ class TestExecutionContext(unittest.TestCase):
                 self.assertIsNone(
                     tuned._get_execution_phase_invariant_config(**(args | changes))
                 )
+
+    def test_prefill_tile_boundaries_and_asm_fallback(self):
+        from csrc.opus_gemm.opus_gemm_common import DEFAULT_COMPILED_KIDS_GFX950
+
+        args = {
+            "N": 4096,
+            "K": 1536,
+            "bias": False,
+            "dtype": "torch.bfloat16",
+            "otype": "torch.bfloat16",
+            "scaleAB": False,
+            "bpreshuffle": False,
+            "execution_role": "target",
+            "execution_phase": "prefill",
+            "gfx": "gfx950",
+            "cu_num": 256,
+        }
+        self.assertTrue({6402, 6403} <= DEFAULT_COMPILED_KIDS_GFX950)
+        with mock.patch.object(tuned, "_opus_launch", mock.Mock()):
+            for m, backend, kid in (
+                (1, "opus", 6403),
+                (1024, "opus", 6403),
+                (1025, "opus", 6402),
+                (1536, "opus", 6402),
+                (1537, "asm", 10),
+                (8192, "asm", 10),
+            ):
+                with self.subTest(m=m):
+                    config = tuned._get_execution_phase_invariant_config(M=m, **args)
+                    self.assertEqual(
+                        (config["libtype"], config["solidx"]), (backend, kid)
+                    )
+
+        with mock.patch.object(tuned, "_opus_launch", None):
+            config = tuned._get_execution_phase_invariant_config(M=1, **args)
+            self.assertEqual((config["libtype"], config["solidx"]), ("asm", 10))
+        with mock.patch.object(tuned, "_opus_launch", mock.Mock()), mock.patch(
+            "aiter.ops.opus.policy.resolve_a16w16_tuned_candidate", return_value=None
+        ):
+            config = tuned._get_execution_phase_invariant_config(M=1025, **args)
+            self.assertEqual((config["libtype"], config["solidx"]), ("asm", 10))
 
 
 if __name__ == "__main__":

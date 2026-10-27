@@ -223,6 +223,7 @@ def get_GEMM_A16W16_tuned_config(
 
 def _get_execution_phase_invariant_config(
     *,
+    M: int,
     N: int,
     K: int,
     bias: bool,
@@ -250,6 +251,36 @@ def _get_execution_phase_invariant_config(
         or bpreshuffle
     ):
         return None
+    # These non-split OPUS tiles and ASM use the same reduction order.
+    if M <= 1536 and _opus_launch is not None:
+        from aiter.ops.opus.policy import resolve_a16w16_tuned_candidate
+
+        kid = 6403 if M <= 1024 else 6402
+        resolved = resolve_a16w16_tuned_candidate(
+            arch=gfx,
+            M=M,
+            N=N,
+            K=K,
+            batch=1,
+            cu_num=cu_num,
+            has_bias=bias,
+            input_dtype=dtypes.bf16,
+            output_dtype=dtypes.bf16,
+            requested_kid=kid,
+            requested_split_k=0,
+        )
+        if resolved is not None:
+            tile_m = 128 if kid == 6403 else 192
+            return {
+                "libtype": "opus",
+                "solidx": int(resolved.resolved_kid),
+                "splitK": 0,
+                "kernelName": (
+                    f"opus_gemm_mono_tile_512x{tile_m}x128x64_"
+                    "2x4_16x16x32_0x0x0_nooob_4g_safe"
+                ),
+                "_selection_source": "execution_phase_invariant_family",
+            }
     return {
         "libtype": "asm",
         "solidx": 10,
@@ -273,6 +304,7 @@ def get_GEMM_A16W16_config(
     execution_phase: str | None = None,
 ):
     phase_config = _get_execution_phase_invariant_config(
+        M=M,
         N=N,
         K=K,
         bias=bias,
